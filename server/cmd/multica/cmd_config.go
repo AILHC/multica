@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -24,7 +25,7 @@ var configShowCmd = &cobra.Command{
 var configSetCmd = &cobra.Command{
 	Use:   "set <key> <value>",
 	Short: "Set a CLI configuration value",
-	Long:  "Supported keys: server_url, app_url, workspace_id",
+	Long:  "Supported keys: server_url, app_url, workspace_id, daemon.device_name, daemon.workspaces_root, daemon.codex_home",
 	Args:  exactArgs(2),
 	RunE:  runConfigSet,
 }
@@ -40,16 +41,26 @@ func runConfigShow(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-
-	path, _ := cli.CLIConfigPathForProfile(profile)
-	fmt.Fprintf(os.Stdout, "Config file: %s\n", path)
-	if profile != "" {
-		fmt.Fprintf(os.Stdout, "Profile:      %s\n", profile)
-	}
-	fmt.Fprintf(os.Stdout, "server_url:   %s\n", valueOrDefault(cfg.ServerURL, "(not set)"))
-	fmt.Fprintf(os.Stdout, "app_url:      %s\n", valueOrDefault(cfg.AppURL, "(not set)"))
-	fmt.Fprintf(os.Stdout, "workspace_id: %s\n", valueOrDefault(cfg.WorkspaceID, "(not set)"))
+	printConfig(cmd.OutOrStdout(), profile, cfg)
 	return nil
+}
+
+func printConfig(w io.Writer, profile string, cfg cli.CLIConfig) {
+	path, _ := cli.CLIConfigPathForProfile(profile)
+	fmt.Fprintf(w, "Config file: %s\n", path)
+	if profile != "" {
+		fmt.Fprintf(w, "Profile:      %s\n", profile)
+	}
+	fmt.Fprintf(w, "server_url:   %s\n", valueOrDefault(cfg.ServerURL, "(not set)"))
+	fmt.Fprintf(w, "app_url:      %s\n", valueOrDefault(cfg.AppURL, "(not set)"))
+	fmt.Fprintf(w, "workspace_id: %s\n", valueOrDefault(cfg.WorkspaceID, "(not set)"))
+	daemonCfg := cfg.Daemon
+	if daemonCfg == nil {
+		daemonCfg = &cli.DaemonConfig{}
+	}
+	fmt.Fprintf(w, "daemon.device_name:     %s\n", valueOrDefault(daemonCfg.DeviceName, "(not set)"))
+	fmt.Fprintf(w, "daemon.workspaces_root: %s\n", valueOrDefault(daemonCfg.WorkspacesRoot, "(not set)"))
+	fmt.Fprintf(w, "daemon.codex_home:      %s\n", valueOrDefault(daemonCfg.CodexHome, "(not set)"))
 }
 
 func runConfigSet(cmd *cobra.Command, args []string) error {
@@ -61,15 +72,8 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	switch key {
-	case "server_url":
-		cfg.ServerURL = value
-	case "app_url":
-		cfg.AppURL = value
-	case "workspace_id":
-		cfg.WorkspaceID = value
-	default:
-		return fmt.Errorf("unknown config key %q (supported: server_url, app_url, workspace_id)", key)
+	if err := setConfigValue(&cfg, key, value); err != nil {
+		return err
 	}
 
 	if err := cli.SaveCLIConfigForProfile(cfg, profile); err != nil {
@@ -78,6 +82,33 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintf(os.Stderr, "Set %s = %s\n", key, value)
 	return nil
+}
+
+func setConfigValue(cfg *cli.CLIConfig, key, value string) error {
+	switch key {
+	case "server_url":
+		cfg.ServerURL = value
+	case "app_url":
+		cfg.AppURL = value
+	case "workspace_id":
+		cfg.WorkspaceID = value
+	case "daemon.device_name":
+		ensureDaemonConfig(cfg).DeviceName = value
+	case "daemon.workspaces_root":
+		ensureDaemonConfig(cfg).WorkspacesRoot = value
+	case "daemon.codex_home":
+		ensureDaemonConfig(cfg).CodexHome = value
+	default:
+		return fmt.Errorf("unknown config key %q (supported: server_url, app_url, workspace_id, daemon.device_name, daemon.workspaces_root, daemon.codex_home)", key)
+	}
+	return nil
+}
+
+func ensureDaemonConfig(cfg *cli.CLIConfig) *cli.DaemonConfig {
+	if cfg.Daemon == nil {
+		cfg.Daemon = &cli.DaemonConfig{}
+	}
+	return cfg.Daemon
 }
 
 func valueOrDefault(v, fallback string) string {

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Directories to symlink from the shared ~/.codex/ into the per-task CODEX_HOME.
@@ -41,6 +42,9 @@ type CodexHomeOptions struct {
 	// Empty means use runtime.GOOS. Primarily exists so tests can exercise
 	// both macOS and Linux paths deterministically.
 	GOOS string
+	// SharedCodexHome overrides the source home used to seed per-task
+	// CODEX_HOME. Empty falls back to CODEX_HOME env, then ~/.codex.
+	SharedCodexHome string
 }
 
 // prepareCodexHome is a thin wrapper around prepareCodexHomeWithOpts kept for
@@ -56,7 +60,7 @@ func prepareCodexHome(codexHome string, logger *slog.Logger) error {
 // config files are copied (isolated). The per-task config.toml gets a
 // daemon-managed sandbox block picked by codexSandboxPolicyFor.
 func prepareCodexHomeWithOpts(codexHome string, opts CodexHomeOptions, logger *slog.Logger) error {
-	sharedHome := resolveSharedCodexHome()
+	sharedHome := resolveSharedCodexHome(opts.SharedCodexHome)
 
 	if err := os.MkdirAll(codexHome, 0o755); err != nil {
 		return fmt.Errorf("create codex-home dir: %w", err)
@@ -137,9 +141,16 @@ func prepareCodexHomeWithOpts(codexHome string, opts CodexHomeOptions, logger *s
 }
 
 // resolveSharedCodexHome returns the path to the user's shared Codex home.
-// Checks $CODEX_HOME first, falls back to ~/.codex.
-func resolveSharedCodexHome() string {
-	if v := os.Getenv("CODEX_HOME"); v != "" {
+// Checks the explicit override first, then $CODEX_HOME, and falls back to
+// ~/.codex.
+func resolveSharedCodexHome(override string) string {
+	if strings.TrimSpace(override) != "" {
+		abs, err := filepath.Abs(override)
+		if err == nil {
+			return abs
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("CODEX_HOME")); v != "" {
 		abs, err := filepath.Abs(v)
 		if err == nil {
 			return abs

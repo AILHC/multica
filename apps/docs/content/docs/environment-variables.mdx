@@ -179,8 +179,22 @@ The daemon runs on the user's local machine, and its config is read from local e
 | `MULTICA_DAEMON_HEARTBEAT_INTERVAL` | `15s` | Heartbeat interval |
 | `MULTICA_DAEMON_POLL_INTERVAL` | `3s` | Task polling interval |
 | `MULTICA_DAEMON_MAX_CONCURRENT_TASKS` | `20` | Max concurrent tasks |
+| `MULTICA_DAEMON_DEVICE_NAME` | hostname | Human-readable daemon device name. Overrides `daemon.device_name` in the CLI profile |
+| `MULTICA_WORKSPACES_ROOT` | `~/multica_workspaces` or `~/multica_workspaces_<profile>` | Root directory where the daemon creates task workspaces. Overrides `daemon.workspaces_root` in the CLI profile |
+| `CODEX_HOME` | `~/.codex` | Shared Codex home used to seed each task's isolated `CODEX_HOME`. Overrides `daemon.codex_home` in the CLI profile |
 | `MULTICA_<PROVIDER>_PATH` | matches the CLI name | Path to each AI coding tool's executable (for example `MULTICA_CLAUDE_PATH`) |
 | `MULTICA_<PROVIDER>_MODEL` | empty | Default model for each AI coding tool |
+
+For values that also exist in the CLI profile, daemon startup resolves them as `daemon start` flags first, then environment variables, then profile config, then built-in defaults. For example, `--codex-home` beats `CODEX_HOME`, and `CODEX_HOME` beats `daemon.codex_home`.
+
+You can persist local daemon defaults without exporting environment variables:
+
+```bash
+multica config set daemon.device_name home-pc
+multica config set daemon.workspaces_root F:\ai-runtime\multica\workspaces
+multica config set daemon.codex_home F:\ai-runtime\multica\codex-home
+multica daemon restart
+```
 
 For a full explanation of how each parameter affects daemon behavior, see [Daemon and runtimes](/daemon-runtimes).
 

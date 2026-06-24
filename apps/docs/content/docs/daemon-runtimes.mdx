@@ -18,6 +18,24 @@ The daemon is part of the Multica CLI. Once you've installed the [Multica CLI](/
 multica daemon start
 ```
 
+You can save local daemon startup defaults in the current CLI profile:
+
+```bash
+multica config set daemon.device_name home-pc
+multica config set daemon.workspaces_root F:\ai-runtime\multica\workspaces
+multica config set daemon.codex_home F:\ai-runtime\multica\codex-home
+multica daemon restart
+```
+
+`daemon.codex_home` is the shared Codex home the daemon copies and links from when it creates each task's isolated `CODEX_HOME`. It is not the final per-task directory.
+
+Daemon startup values resolve in this order:
+
+1. Explicit `multica daemon start` flags (`--device-name`, `--workspaces-root`, `--codex-home`)
+2. Environment variables (`MULTICA_DAEMON_DEVICE_NAME`, `MULTICA_WORKSPACES_ROOT`, `CODEX_HOME`)
+3. Profile config (`daemon.device_name`, `daemon.workspaces_root`, `daemon.codex_home`)
+4. Built-in defaults
+
 On startup it does four things:
 
 1. Reads the credentials saved when you logged in
@@ -30,6 +48,8 @@ Common commands:
 | Command | Purpose |
 |---|---|
 | `multica daemon start` | Start (background by default; add `--foreground` to run in the foreground) |
+| `multica daemon start --workspaces-root <path>` | Override the workspaces root for this daemon start |
+| `multica daemon start --codex-home <path>` | Override the shared Codex home used to seed per-task `CODEX_HOME` |
 | `multica daemon stop` | Stop |
 | `multica daemon restart` | Restart |
 | `multica daemon status` | Show status |

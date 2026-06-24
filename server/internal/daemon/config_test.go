@@ -14,6 +14,14 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 )
 
+func testHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	return home
+}
+
 func TestPatternsFromEnv_DefaultsWhenUnset(t *testing.T) {
 	t.Setenv("MULTICA_GC_ARTIFACT_PATTERNS", "")
 	defaults := []string{"node_modules", ".next", ".turbo"}
@@ -606,8 +614,7 @@ func pinNonCodexAgentsToMissingPaths(t *testing.T) {
 // = default), and returns the resolved path so tests can assert against it.
 func writeCLIConfigForProfile(t *testing.T, profile string, cfg cli.CLIConfig) {
 	t.Helper()
-	tmp := t.TempDir()
-	t.Setenv("HOME", tmp)
+	testHome(t)
 	if err := cli.SaveCLIConfigForProfile(cfg, profile); err != nil {
 		t.Fatalf("write cli config: %v", err)
 	}
@@ -751,8 +758,7 @@ func TestLoadConfig_AppliesBackendOverridesFromConfigFile(t *testing.T) {
 
 	// Drop a CLI config under the user's HOME (already pointed at TempDir
 	// by stageFakeAgent's t.Setenv chain — but reassert here for clarity).
-	homeForCLIConfig := t.TempDir()
-	t.Setenv("HOME", homeForCLIConfig)
+	testHome(t)
 	cfg := cli.CLIConfig{
 		ServerURL: "http://localhost:8080",
 		Backends: &cli.BackendOverrides{
@@ -794,7 +800,7 @@ func TestLoadConfig_BackendOverrides_BackwardCompat_NoConfigFile(t *testing.T) {
 	stageFakeAgent(t)
 
 	// Point HOME at an empty dir — no config.json present.
-	t.Setenv("HOME", t.TempDir())
+	testHome(t)
 	os.Unsetenv("MULTICA_OPENCLAW_PATH")
 	os.Unsetenv("OPENCLAW_STATE_DIR")
 	t.Cleanup(func() {
@@ -822,8 +828,7 @@ func TestLoadConfig_BackendOverrides_BackwardCompat_NoConfigFile(t *testing.T) {
 // env-var-only configuration.
 func TestLoadConfig_BackendOverrides_MalformedConfigFileNonFatal(t *testing.T) {
 	stageFakeAgent(t)
-	homeDir := t.TempDir()
-	t.Setenv("HOME", homeDir)
+	homeDir := testHome(t)
 
 	// Write malformed JSON.
 	cfgDir := filepath.Join(homeDir, ".multica")
@@ -844,6 +849,79 @@ func TestLoadConfig_BackendOverrides_MalformedConfigFileNonFatal(t *testing.T) {
 	// Should also have logged a slog Warn — we don't assert on the log
 	// output here (avoids brittle string matching), but the build does
 	// make sure log/slog stays imported.
+}
+
+func TestLoadConfig_DaemonProfileConfigProvidesDefaults(t *testing.T) {
+	stageFakeAgent(t)
+	home := testHome(t)
+	t.Setenv("MULTICA_DAEMON_DEVICE_NAME", "")
+	t.Setenv("MULTICA_WORKSPACES_ROOT", "")
+	t.Setenv("CODEX_HOME", "")
+
+	cfg := cli.CLIConfig{
+		ServerURL: "http://localhost:8080",
+		Daemon: &cli.DaemonConfig{
+			DeviceName:     "profile-device",
+			WorkspacesRoot: filepath.Join(home, "profile-workspaces"),
+			CodexHome:      filepath.Join(home, "profile-codex"),
+		},
+	}
+	if err := cli.SaveCLIConfig(cfg); err != nil {
+		t.Fatalf("save cli config: %v", err)
+	}
+
+	loaded, err := LoadConfig(Overrides{ServerURL: "http://localhost:8080"})
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if loaded.DeviceName != "profile-device" {
+		t.Errorf("DeviceName = %q, want profile-device", loaded.DeviceName)
+	}
+	if loaded.WorkspacesRoot != filepath.Join(home, "profile-workspaces") {
+		t.Errorf("WorkspacesRoot = %q, want profile value", loaded.WorkspacesRoot)
+	}
+	if loaded.SharedCodexHome != filepath.Join(home, "profile-codex") {
+		t.Errorf("SharedCodexHome = %q, want profile value", loaded.SharedCodexHome)
+	}
+}
+
+func TestLoadConfig_DaemonProfileConfigPrecedence(t *testing.T) {
+	stageFakeAgent(t)
+	home := testHome(t)
+	t.Setenv("MULTICA_DAEMON_DEVICE_NAME", "env-device")
+	t.Setenv("MULTICA_WORKSPACES_ROOT", filepath.Join(home, "env-workspaces"))
+	t.Setenv("CODEX_HOME", filepath.Join(home, "env-codex"))
+
+	cfg := cli.CLIConfig{
+		ServerURL: "http://localhost:8080",
+		Daemon: &cli.DaemonConfig{
+			DeviceName:     "profile-device",
+			WorkspacesRoot: filepath.Join(home, "profile-workspaces"),
+			CodexHome:      filepath.Join(home, "profile-codex"),
+		},
+	}
+	if err := cli.SaveCLIConfig(cfg); err != nil {
+		t.Fatalf("save cli config: %v", err)
+	}
+
+	loaded, err := LoadConfig(Overrides{
+		ServerURL:       "http://localhost:8080",
+		DeviceName:      "flag-device",
+		WorkspacesRoot:  filepath.Join(home, "flag-workspaces"),
+		SharedCodexHome: filepath.Join(home, "flag-codex"),
+	})
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if loaded.DeviceName != "flag-device" {
+		t.Errorf("DeviceName = %q, want flag-device", loaded.DeviceName)
+	}
+	if loaded.WorkspacesRoot != filepath.Join(home, "flag-workspaces") {
+		t.Errorf("WorkspacesRoot = %q, want flag value", loaded.WorkspacesRoot)
+	}
+	if loaded.SharedCodexHome != filepath.Join(home, "flag-codex") {
+		t.Errorf("SharedCodexHome = %q, want flag value", loaded.SharedCodexHome)
+	}
 }
 
 // agentKeys is a tiny helper to make agent-map missing-key error messages

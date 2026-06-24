@@ -82,6 +82,7 @@ type Config struct {
 	Profile                        string                // profile name (empty = default)
 	Agents                         map[string]AgentEntry // keyed by provider: claude, codebuddy, codex, copilot, opencode, openclaw, hermes, pi, cursor, kimi, kiro, antigravity, qoder
 	WorkspacesRoot                 string                // base path for execution envs (default: ~/multica_workspaces)
+	SharedCodexHome                string                // source home used to seed per-task CODEX_HOME
 	KeepEnvAfterTask               bool                  // preserve env after task for debugging
 	HealthPort                     int                   // local HTTP port for health checks (default: 19514)
 	MaxConcurrentTasks             int                   // max tasks running in parallel (default: 20)
@@ -117,6 +118,7 @@ type Config struct {
 type Overrides struct {
 	ServerURL         string
 	WorkspacesRoot    string
+	SharedCodexHome   string
 	PollInterval      time.Duration
 	HeartbeatInterval time.Duration
 	// AgentTimeout is a pointer so an explicit `--agent-timeout 0` (no cap) is
@@ -173,11 +175,15 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	// file should not prevent daemon startup, since the daemon can still run
 	// purely from env-var configuration. We log a warning and proceed with
 	// no overrides.
-	var profileCommandOverrides map[string]string
+	var (
+		daemonProfileConfig     *cli.DaemonConfig
+		profileCommandOverrides map[string]string
+	)
 	if cliCfg, err := cli.LoadCLIConfigForProfile(overrides.Profile); err != nil {
 		slog.Warn("could not load CLI config for backend overrides; proceeding without",
 			"profile", overrides.Profile, "err", err)
 	} else {
+		daemonProfileConfig = cliCfg.Daemon
 		if oc := openclawOverrideFrom(cliCfg); oc != nil {
 			applyOpenclawOverride(oc)
 		}
@@ -421,7 +427,13 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	// canonical id was itself promoted from a pre-change profile file).
 	legacyDaemonIDs = filterLegacyIDs(legacyDaemonIDs, daemonID)
 
-	deviceName := envOrDefault("MULTICA_DAEMON_DEVICE_NAME", host)
+	deviceName := host
+	if daemonProfileConfig != nil && strings.TrimSpace(daemonProfileConfig.DeviceName) != "" {
+		deviceName = strings.TrimSpace(daemonProfileConfig.DeviceName)
+	}
+	if v := strings.TrimSpace(os.Getenv("MULTICA_DAEMON_DEVICE_NAME")); v != "" {
+		deviceName = v
+	}
 	if overrides.DeviceName != "" {
 		deviceName = overrides.DeviceName
 	}
@@ -431,8 +443,19 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		runtimeName = overrides.RuntimeName
 	}
 
-	// Workspaces root: override > env > default (~/multica_workspaces or ~/multica_workspaces_<profile>)
-	workspacesRoot, err := ResolveWorkspacesRoot(profile, overrides.WorkspacesRoot)
+	profileWorkspacesRoot := ""
+	profileCodexHome := ""
+	if daemonProfileConfig != nil {
+		profileWorkspacesRoot = daemonProfileConfig.WorkspacesRoot
+		profileCodexHome = daemonProfileConfig.CodexHome
+	}
+
+	// Workspaces root: override > env > profile config > default.
+	workspacesRoot, err := ResolveWorkspacesRoot(profile, profileWorkspacesRoot, overrides.WorkspacesRoot)
+	if err != nil {
+		return Config{}, err
+	}
+	sharedCodexHome, err := ResolveSharedCodexHome(profileCodexHome, overrides.SharedCodexHome)
 	if err != nil {
 		return Config{}, err
 	}
@@ -507,6 +530,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		Profile:                        profile,
 		Agents:                         agents,
 		WorkspacesRoot:                 workspacesRoot,
+		SharedCodexHome:                sharedCodexHome,
 		KeepEnvAfterTask:               keepEnv,
 		GCEnabled:                      gcEnabled,
 		GCInterval:                     gcInterval,
@@ -577,12 +601,15 @@ func NormalizeServerBaseURL(raw string) (string, error) {
 
 // ResolveWorkspacesRoot returns the absolute path that the daemon and CLI
 // should treat as the workspaces root. Resolution order: explicit override >
-// MULTICA_WORKSPACES_ROOT env > default ($HOME/multica_workspaces, or
-// $HOME/multica_workspaces_<profile> for a named profile). Read-only callers
-// (e.g. `multica daemon disk-usage`) use this directly so they pick the same
-// directory the running daemon would have picked.
-func ResolveWorkspacesRoot(profile, override string) (string, error) {
-	root := strings.TrimSpace(os.Getenv("MULTICA_WORKSPACES_ROOT"))
+// MULTICA_WORKSPACES_ROOT env > profile config > default
+// ($HOME/multica_workspaces, or $HOME/multica_workspaces_<profile> for a named
+// profile). Read-only callers (e.g. `multica daemon disk-usage`) use this
+// directly so they pick the same directory the running daemon would have picked.
+func ResolveWorkspacesRoot(profile, profileValue, override string) (string, error) {
+	root := strings.TrimSpace(profileValue)
+	if v := strings.TrimSpace(os.Getenv("MULTICA_WORKSPACES_ROOT")); v != "" {
+		root = v
+	}
 	if override != "" {
 		root = override
 	}
@@ -600,6 +627,31 @@ func ResolveWorkspacesRoot(profile, override string) (string, error) {
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return "", fmt.Errorf("resolve absolute workspaces root: %w", err)
+	}
+	return abs, nil
+}
+
+// ResolveSharedCodexHome returns the shared Codex home that seeds per-task
+// CODEX_HOME directories. Resolution order: explicit override > CODEX_HOME env
+// > profile config > ~/.codex.
+func ResolveSharedCodexHome(profileValue, override string) (string, error) {
+	root := strings.TrimSpace(profileValue)
+	if v := strings.TrimSpace(os.Getenv("CODEX_HOME")); v != "" {
+		root = v
+	}
+	if override != "" {
+		root = override
+	}
+	if root == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("resolve home directory: %w (set CODEX_HOME to override)", err)
+		}
+		root = filepath.Join(home, ".codex")
+	}
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve absolute codex home: %w", err)
 	}
 	return abs, nil
 }

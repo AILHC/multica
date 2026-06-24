@@ -81,6 +81,8 @@ func init() {
 	f.Bool("foreground", false, "Run in the foreground instead of background")
 	f.String("daemon-id", "", "Unique daemon identifier (env: MULTICA_DAEMON_ID)")
 	f.String("device-name", "", "Human-readable device name (env: MULTICA_DAEMON_DEVICE_NAME)")
+	f.String("workspaces-root", "", "Workspaces root path (env: MULTICA_WORKSPACES_ROOT, config: daemon.workspaces_root)")
+	f.String("codex-home", "", "Shared Codex home used to seed per-task CODEX_HOME (env: CODEX_HOME, config: daemon.codex_home)")
 	f.String("runtime-name", "", "Runtime display name (env: MULTICA_AGENT_RUNTIME_NAME)")
 	f.Duration("poll-interval", 0, "Task poll interval (env: MULTICA_DAEMON_POLL_INTERVAL)")
 	f.Duration("heartbeat-interval", 0, "Heartbeat interval (env: MULTICA_DAEMON_HEARTBEAT_INTERVAL)")
@@ -100,6 +102,8 @@ func init() {
 	rf.Bool("foreground", false, "Run in the foreground instead of background")
 	rf.String("daemon-id", "", "Unique daemon identifier (env: MULTICA_DAEMON_ID)")
 	rf.String("device-name", "", "Human-readable device name (env: MULTICA_DAEMON_DEVICE_NAME)")
+	rf.String("workspaces-root", "", "Workspaces root path (env: MULTICA_WORKSPACES_ROOT, config: daemon.workspaces_root)")
+	rf.String("codex-home", "", "Shared Codex home used to seed per-task CODEX_HOME (env: CODEX_HOME, config: daemon.codex_home)")
 	rf.String("runtime-name", "", "Runtime display name (env: MULTICA_AGENT_RUNTIME_NAME)")
 	rf.Duration("poll-interval", 0, "Task poll interval (env: MULTICA_DAEMON_POLL_INTERVAL)")
 	rf.Duration("heartbeat-interval", 0, "Heartbeat interval (env: MULTICA_DAEMON_HEARTBEAT_INTERVAL)")
@@ -294,6 +298,12 @@ func buildDaemonStartArgs(cmd *cobra.Command) []string {
 	if v := flagString(cmd, "device-name"); v != "" {
 		args = append(args, "--device-name", v)
 	}
+	if v := flagString(cmd, "workspaces-root"); v != "" {
+		args = append(args, "--workspaces-root", v)
+	}
+	if v := flagString(cmd, "codex-home"); v != "" {
+		args = append(args, "--codex-home", v)
+	}
 	if v := flagString(cmd, "runtime-name"); v != "" {
 		args = append(args, "--runtime-name", v)
 	}
@@ -345,12 +355,14 @@ func runDaemonForeground(cmd *cobra.Command) error {
 		}
 	}
 	overrides := daemon.Overrides{
-		ServerURL:   serverURL,
-		DaemonID:    flagString(cmd, "daemon-id"),
-		DeviceName:  flagString(cmd, "device-name"),
-		RuntimeName: flagString(cmd, "runtime-name"),
-		Profile:     profile,
-		HealthPort:  healthPortForProfile(profile),
+		ServerURL:       serverURL,
+		DaemonID:        flagString(cmd, "daemon-id"),
+		DeviceName:      flagString(cmd, "device-name"),
+		WorkspacesRoot:  flagString(cmd, "workspaces-root"),
+		SharedCodexHome: flagString(cmd, "codex-home"),
+		RuntimeName:     flagString(cmd, "runtime-name"),
+		Profile:         profile,
+		HealthPort:      healthPortForProfile(profile),
 	}
 	if d, _ := cmd.Flags().GetDuration("poll-interval"); d > 0 {
 		overrides.PollInterval = d
@@ -708,6 +720,14 @@ func flagString(cmd *cobra.Command, name string) string {
 	return val
 }
 
+func profileDaemonWorkspacesRoot(profile string) string {
+	cfg, err := cli.LoadCLIConfigForProfile(profile)
+	if err != nil || cfg.Daemon == nil {
+		return ""
+	}
+	return cfg.Daemon.WorkspacesRoot
+}
+
 // --- daemon disk-usage ---
 
 func runDaemonDiskUsage(cmd *cobra.Command, _ []string) error {
@@ -733,7 +753,7 @@ func runDaemonDiskUsage(cmd *cobra.Command, _ []string) error {
 		return runDaemonDiskUsageAggregate(byWorkspace, top, output)
 	}
 
-	workspacesRoot, err := daemon.ResolveWorkspacesRoot(profile, rootOverride)
+	workspacesRoot, err := daemon.ResolveWorkspacesRoot(profile, profileDaemonWorkspacesRoot(profile), rootOverride)
 	if err != nil {
 		return fmt.Errorf("resolve workspaces root: %w", err)
 	}
@@ -813,7 +833,7 @@ func enumerateDiskUsageRoots() ([]daemon.DiskUsageRoot, error) {
 	seen := map[string]bool{}
 	out := make([]daemon.DiskUsageRoot, 0)
 
-	if root, err := daemon.ResolveWorkspacesRoot("", ""); err == nil {
+	if root, err := daemon.ResolveWorkspacesRoot("", profileDaemonWorkspacesRoot(""), ""); err == nil {
 		out = append(out, daemon.DiskUsageRoot{Profile: "", Root: root})
 		seen[root] = true
 	}
@@ -834,7 +854,7 @@ func enumerateDiskUsageRoots() ([]daemon.DiskUsageRoot, error) {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		root, err := daemon.ResolveWorkspacesRoot(name, "")
+		root, err := daemon.ResolveWorkspacesRoot(name, profileDaemonWorkspacesRoot(name), "")
 		if err != nil || seen[root] {
 			continue
 		}
@@ -974,7 +994,7 @@ type diskUsageProfileSuggestion struct {
 func diskUsageProfileSuggestions(currentProfile, currentRoot string) []diskUsageProfileSuggestion {
 	out := make([]diskUsageProfileSuggestion, 0)
 	if currentProfile != "" {
-		if root, err := daemon.ResolveWorkspacesRoot("", ""); err == nil && !samePath(root, currentRoot) {
+		if root, err := daemon.ResolveWorkspacesRoot("", profileDaemonWorkspacesRoot(""), ""); err == nil && !samePath(root, currentRoot) {
 			if taskCount := countDiskUsageTaskDirs(root); taskCount > 0 {
 				out = append(out, diskUsageProfileSuggestion{
 					Profile:   "",
@@ -1002,7 +1022,7 @@ func diskUsageProfileSuggestions(currentProfile, currentRoot string) []diskUsage
 		if profile == currentProfile {
 			continue
 		}
-		root, err := daemon.ResolveWorkspacesRoot(profile, "")
+		root, err := daemon.ResolveWorkspacesRoot(profile, profileDaemonWorkspacesRoot(profile), "")
 		if err != nil || samePath(root, currentRoot) {
 			continue
 		}
