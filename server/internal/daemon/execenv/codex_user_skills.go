@@ -23,8 +23,8 @@ import (
 // Per-skill failures are logged and skipped — a single broken user skill
 // must not prevent the task from running. Returning an error is reserved for
 // failures that prevent listing the shared skills directory at all.
-func seedUserCodexSkills(codexHome string, workspaceSkills []SkillContextForEnv, logger *slog.Logger) error {
-	sharedSkillsDir := filepath.Join(resolveSharedCodexHome(), "skills")
+func seedUserCodexSkills(codexHome, sharedCodexHome string, workspaceSkills []SkillContextForEnv, logger *slog.Logger) error {
+	sharedSkillsDir := filepath.Join(resolveSharedCodexHome(sharedCodexHome), "skills")
 
 	info, err := os.Stat(sharedSkillsDir)
 	if err != nil {

@@ -54,6 +54,76 @@ func TestPredictRootDir(t *testing.T) {
 	}
 }
 
+func TestPrepareCodexUsesSharedCodexHomeParam(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	sharedHome := t.TempDir()
+	envHome := t.TempDir()
+	t.Setenv("CODEX_HOME", envHome)
+
+	if err := os.WriteFile(filepath.Join(sharedHome, "config.toml"), []byte(`model = "from-profile"`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(envHome, "config.toml"), []byte(`model = "from-env"`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	env, err := Prepare(PrepareParams{
+		WorkspacesRoot:  workspaceRoot,
+		WorkspaceID:     "ws-1",
+		TaskID:          "task-1",
+		Provider:        "codex",
+		SharedCodexHome: sharedHome,
+	}, testLogger())
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(env.CodexHome, "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `from-profile`) {
+		t.Fatalf("config.toml = %q, want copied from SharedCodexHome", string(data))
+	}
+}
+
+func TestReuseCodexUsesSharedCodexHomeParam(t *testing.T) {
+	workspacesRoot := t.TempDir()
+	sharedHome := t.TempDir()
+	envHome := t.TempDir()
+	t.Setenv("CODEX_HOME", envHome)
+
+	if err := os.WriteFile(filepath.Join(sharedHome, "config.toml"), []byte(`model = "from-profile"`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(envHome, "config.toml"), []byte(`model = "from-env"`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	envRoot := PredictRootDir(workspacesRoot, "ws-1", "task-1")
+	workDir := filepath.Join(envRoot, "workdir")
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	env := Reuse(ReuseParams{
+		WorkDir:         workDir,
+		Provider:        "codex",
+		SharedCodexHome: sharedHome,
+	}, testLogger())
+	if env == nil {
+		t.Fatalf("Reuse returned nil")
+	}
+
+	data, err := os.ReadFile(filepath.Join(env.CodexHome, "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `from-profile`) {
+		t.Fatalf("config.toml = %q, want copied from SharedCodexHome", string(data))
+	}
+}
+
 func TestSanitizeName(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

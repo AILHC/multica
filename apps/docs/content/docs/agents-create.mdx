@@ -63,6 +63,8 @@ ANTHROPIC_BASE_URL = https://my-proxy.example.com
 
 System-critical variables cannot be overridden: `PATH`, `HOME`, `USER`, `SHELL`, `TERM`, `CODEX_HOME`, and any key starting with `MULTICA_*` are silently ignored by the daemon (with a warn log — no error).
 
+For Codex agents, configure the shared Codex home at the daemon layer instead of `custom_env`: use `multica config set daemon.codex_home <path>`, `multica daemon start --codex-home <path>`, or the daemon process environment variable `CODEX_HOME`. The daemon still creates an isolated per-task `CODEX_HOME` for each run.
+
 <Callout type="warning">
 **Values in `custom_env` are stored in plaintext in Multica's server database.** Agent list/get responses no longer carry env values at all — only an opaque count. Reading values requires a workspace owner or admin to hit the dedicated, audited `GET /api/agents/{id}/env` endpoint (CLI: `multica agent env get <id>`). Agents running tasks can NOT use their host's owner credentials to reveal env on other agents — the endpoint denies agent-actor sessions.
 

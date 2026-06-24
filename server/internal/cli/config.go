@@ -24,6 +24,10 @@ type CLIConfig struct {
 	// defaults" — the historical behavior. See issue #3875.
 	Backends *BackendOverrides `json:"backends,omitempty"`
 
+	// Daemon contains per-profile daemon startup defaults. Environment
+	// variables and explicit daemon start flags still take precedence.
+	Daemon *DaemonConfig `json:"daemon,omitempty"`
+
 	// ProfileCommandOverrides is a per-machine map of custom runtime
 	// profile_id -> absolute executable path (MUL-3284). A workspace custom
 	// runtime profile records the command_name the daemon resolves on PATH,
@@ -36,6 +40,14 @@ type CLIConfig struct {
 	// intentionally local-only (it is never sent to the server) because the
 	// path is a property of this machine, not of the shared profile.
 	ProfileCommandOverrides map[string]string `json:"profile_command_overrides,omitempty"`
+}
+
+// DaemonConfig holds local daemon startup defaults for this CLI profile.
+// Empty fields fall through to env vars and built-in defaults.
+type DaemonConfig struct {
+	DeviceName     string `json:"device_name,omitempty"`
+	WorkspacesRoot string `json:"workspaces_root,omitempty"`
+	CodexHome      string `json:"codex_home,omitempty"`
 }
 
 // BackendOverrides holds per-backend configuration overrides. Each field is

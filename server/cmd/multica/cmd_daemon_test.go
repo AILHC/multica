@@ -7,8 +7,17 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/multica-ai/multica/server/internal/daemon"
 )
+
+func testHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	return home
+}
 
 // TestDaemonAlive locks in the liveness predicate the lifecycle commands rely
 // on: both a ready ("running") and a still-booting ("starting") daemon count as
@@ -57,6 +66,29 @@ func TestPrintDaemonStatusIncludesCLIVersion(t *testing.T) {
 	got := out.String()
 	if !strings.Contains(got, "Version:     v9.9.9\n") {
 		t.Fatalf("daemon status output = %q, want CLI version line", got)
+	}
+}
+
+func TestBuildDaemonStartArgsForwardsProfileBackedOverrideFlags(t *testing.T) {
+	cmd := daemonStartCmd
+	_ = cmd.Flags().Set("workspaces-root", "F:\\ai-runtime\\multica\\workspaces")
+	_ = cmd.Flags().Set("codex-home", "F:\\ai-runtime\\multica\\codex-home")
+	t.Cleanup(func() {
+		_ = cmd.Flags().Set("workspaces-root", "")
+		_ = cmd.Flags().Set("codex-home", "")
+	})
+
+	args := buildDaemonStartArgs(cmd)
+	got := strings.Join(args, "\n")
+	for _, want := range []string{
+		"--workspaces-root",
+		"F:\\ai-runtime\\multica\\workspaces",
+		"--codex-home",
+		"F:\\ai-runtime\\multica\\codex-home",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("args = %#v, want %q", args, want)
+		}
 	}
 }
 
@@ -132,8 +164,7 @@ func TestPrintDaemonStatusAlignsValuesWithProfileLabel(t *testing.T) {
 }
 
 func TestPrintDiskUsageOtherRootsHintSuggestsProfilesWithTasks(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := testHome(t)
 	t.Setenv("MULTICA_WORKSPACES_ROOT", "")
 
 	mkdirProfile(t, home, "empty")
@@ -180,8 +211,7 @@ func TestPrintDiskUsageOtherRootsHintSuggestsProfilesWithTasks(t *testing.T) {
 // root already has tasks, otherwise the Desktop app's root stays hidden behind
 // a non-empty default root.
 func TestPrintDiskUsageOtherRootsHintFiresWhenCurrentRootNonEmpty(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := testHome(t)
 	t.Setenv("MULTICA_WORKSPACES_ROOT", "")
 
 	mkdirProfile(t, home, "desktop-host")
@@ -200,8 +230,7 @@ func TestPrintDiskUsageOtherRootsHintFiresWhenCurrentRootNonEmpty(t *testing.T) 
 }
 
 func TestPrintDiskUsageOtherRootsHintSuggestsDefaultFromNamedProfile(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := testHome(t)
 	t.Setenv("MULTICA_WORKSPACES_ROOT", "")
 
 	writeDefaultDiskUsageTaskFile(t, home, "ws0", "task0", "workdir/main.go")
@@ -218,8 +247,7 @@ func TestPrintDiskUsageOtherRootsHintSuggestsDefaultFromNamedProfile(t *testing.
 }
 
 func TestPrintDiskUsageOtherRootsHintSkipsExplicitRootOverride(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := testHome(t)
 	t.Setenv("MULTICA_WORKSPACES_ROOT", "")
 
 	mkdirProfile(t, home, "has-task")
@@ -236,8 +264,7 @@ func TestPrintDiskUsageOtherRootsHintSkipsExplicitRootOverride(t *testing.T) {
 }
 
 func TestEnumerateDiskUsageRoots(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := testHome(t)
 	t.Setenv("MULTICA_WORKSPACES_ROOT", "")
 
 	// Two profiles configured under ~/.multica/profiles, but only one has its
@@ -261,6 +288,34 @@ func TestEnumerateDiskUsageRoots(t *testing.T) {
 	if roots[1].Profile != "desktop-host" || roots[1].Root != filepath.Join(home, "multica_workspaces_desktop-host") {
 		t.Fatalf("roots[1] = %+v, want desktop-host root", roots[1])
 	}
+}
+
+func TestEnumerateDiskUsageRootsUsesProfileDaemonConfig(t *testing.T) {
+	home := testHome(t)
+	t.Setenv("MULTICA_WORKSPACES_ROOT", "")
+
+	customRoot := filepath.Join(home, "custom-profile-root")
+	if err := cli.SaveCLIConfigForProfile(cli.CLIConfig{
+		Daemon: &cli.DaemonConfig{WorkspacesRoot: customRoot},
+	}, "custom"); err != nil {
+		t.Fatal(err)
+	}
+	writeDiskUsageFile(t, filepath.Join(customRoot, "ws1", "task1", "workdir", "main.go"))
+
+	roots, err := enumerateDiskUsageRoots()
+	if err != nil {
+		t.Fatalf("enumerateDiskUsageRoots: %v", err)
+	}
+
+	for _, root := range roots {
+		if root.Profile == "custom" {
+			if root.Root != customRoot {
+				t.Fatalf("custom root = %q, want %q", root.Root, customRoot)
+			}
+			return
+		}
+	}
+	t.Fatalf("roots = %+v, want custom profile root", roots)
 }
 
 func TestPrintAggregateDiskUsageShowsRootsAndGrandTotal(t *testing.T) {
