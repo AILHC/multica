@@ -50,7 +50,7 @@ func loadBuiltinSkill(name string) (AgentSkillData, bool) {
 		// than ship an empty skill.
 		return AgentSkillData{}, false
 	}
-	skill := AgentSkillData{Name: name, Content: string(content)}
+	skill := AgentSkillData{Name: name, Content: normalizeEmbeddedSkillContent(content)}
 	// Any other file in the directory becomes a supporting file, preserving
 	// its relative path so subdirectories (e.g. rules/styling.md) survive.
 	_ = fs.WalkDir(builtinSkillsFS, dir, func(p string, d fs.DirEntry, walkErr error) error {
@@ -65,8 +65,12 @@ func loadBuiltinSkill(name string) (AgentSkillData, bool) {
 		if readErr != nil {
 			return nil
 		}
-		skill.Files = append(skill.Files, AgentSkillFileData{Path: rel, Content: string(data)})
+		skill.Files = append(skill.Files, AgentSkillFileData{Path: rel, Content: normalizeEmbeddedSkillContent(data)})
 		return nil
 	})
 	return skill, true
+}
+
+func normalizeEmbeddedSkillContent(content []byte) string {
+	return strings.ReplaceAll(string(content), "\r\n", "\n")
 }
