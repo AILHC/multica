@@ -175,15 +175,22 @@ type Daemon struct {
 	wsHBMu      sync.RWMutex         // guards wsHBLastAck
 	wsHBLastAck map[string]time.Time // runtime_id -> last successful WS heartbeat ack timestamp
 
+	// reconcile fans out a "re-check server state now" signal to subscribers
+	// (watchTaskCancellation, workspaceSyncLoop) so the WS connect/reconnect
+	// path can shrink the 5s / 30s reconciliation gap to sub-second. See
+	// reconcile.go and runTaskWakeupConnection.
+	reconcile *reconcileBroadcaster
+
 	// runtimeGoneMu guards runtimeGoneInflight, reregisterNextAttempt, and
-	// reregisterLastCompletedAt. The state lets heartbeat / poller / WS-ack
+	// reregisterLastCompletedSeq. The state lets heartbeat / poller / WS-ack
 	// handlers converge on a single recovery path when they each detect that a
 	// runtime row was deleted server-side without three of them stampeding
 	// registerRuntimesForWorkspace.
-	runtimeGoneMu             sync.Mutex
-	runtimeGoneInflight       map[string]struct{}  // runtime_id -> currently recovering
-	reregisterNextAttempt     map[string]time.Time // workspace_id -> earliest time the next re-register attempt may run
-	reregisterLastCompletedAt map[string]time.Time // workspace_id -> wall-clock at which the last SUCCESSFUL re-register call returned (failures intentionally not stamped — see recordRegisterCompletion)
+	runtimeGoneMu              sync.Mutex
+	runtimeGoneInflight        map[string]struct{}  // runtime_id -> currently recovering
+	reregisterNextAttempt      map[string]time.Time // workspace_id -> earliest time the next re-register attempt may run
+	reregisterEventSeq         uint64
+	reregisterLastCompletedSeq map[string]uint64 // workspace_id -> event sequence covered by the last SUCCESSFUL re-register call
 
 	cancelFunc    context.CancelFunc // set by Run(); called by triggerRestart
 	rootCtx       context.Context    // set by Run(); used by long-running recoveries that must survive per-runtime ctx cancellation
@@ -247,23 +254,24 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 	// server can split logs/metrics by client version (parallel to the CLI).
 	client.SetVersion(cfg.CLIVersion)
 	d := &Daemon{
-		cfg:                       cfg,
-		client:                    client,
-		repoCache:                 repocache.New(cacheRoot, logger),
-		skillCache:                NewSkillBundleCache(skillCacheRoot),
-		logger:                    logger,
-		workspaces:                make(map[string]*workspaceState),
-		runtimeIndex:              make(map[string]Runtime),
-		profileLaunchSpecs:        make(map[string]profileLaunchSpec),
-		runtimeSet:                newRuntimeSetWatcher(),
-		agentVersions:             make(map[string]string),
-		wsHBLastAck:               make(map[string]time.Time),
-		activeEnvRoots:            make(map[string]int),
-		localPathLocks:            NewLocalPathLocker(),
-		runtimeGoneInflight:       make(map[string]struct{}),
-		reregisterNextAttempt:     make(map[string]time.Time),
-		reregisterLastCompletedAt: make(map[string]time.Time),
-		cancelPollInterval:        5 * time.Second,
+		cfg:                        cfg,
+		client:                     client,
+		repoCache:                  repocache.New(cacheRoot, logger),
+		skillCache:                 NewSkillBundleCache(skillCacheRoot),
+		logger:                     logger,
+		workspaces:                 make(map[string]*workspaceState),
+		runtimeIndex:               make(map[string]Runtime),
+		profileLaunchSpecs:         make(map[string]profileLaunchSpec),
+		runtimeSet:                 newRuntimeSetWatcher(),
+		agentVersions:              make(map[string]string),
+		wsHBLastAck:                make(map[string]time.Time),
+		activeEnvRoots:             make(map[string]int),
+		localPathLocks:             NewLocalPathLocker(),
+		runtimeGoneInflight:        make(map[string]struct{}),
+		reregisterNextAttempt:      make(map[string]time.Time),
+		reregisterLastCompletedSeq: make(map[string]uint64),
+		cancelPollInterval:         5 * time.Second,
+		reconcile:                  newReconcileBroadcaster(),
 	}
 	d.runner = taskRunnerFunc(d.runTask)
 	d.runUpdateFn = d.runUpdate
@@ -316,11 +324,11 @@ const reregisterFailureBackoff = 60 * time.Second
 //     single registerRuntimesForWorkspace call. The slot is cleared on success
 //     so a later distinct runtime deletion in the same workspace can trigger
 //     its own recovery without waiting for the coalesce window to expire; and
-//   - keys a per-workspace last-completed timestamp so that a straggler whose
-//     removeStaleRuntime took long enough that a sibling fully ran AND cleared
-//     the slot can still recognize itself as same-wave and bail. Without this,
-//     the success-case slot clear opens a race where the late caller re-claims
-//     an empty slot and double-registers.
+//   - keys a per-workspace last-completed event sequence so that a straggler
+//     whose removeStaleRuntime took long enough that a sibling fully ran AND
+//     cleared the slot can still recognize itself as same-wave and bail.
+//     Without this, the success-case slot clear opens a race where the late
+//     caller re-claims an empty slot and double-registers.
 //
 // On failure of the underlying re-register, the next-attempt timestamp is
 // extended by reregisterFailureBackoff so we don't replace a server-side log
@@ -336,13 +344,14 @@ func (d *Daemon) handleRuntimeGone(runtimeID string) {
 		return
 	}
 
-	// entryAt anchors the same-wave-straggler check at the bottom of the
-	// function. Captured at the very top so removeStaleRuntime mutex
-	// contention can't push it past a sibling's register completion.
-	entryAt := time.Now()
-
-	// Stampede control per runtime ID.
+	// entrySeq anchors the same-wave-straggler check at the bottom of the
+	// function. Captured under runtimeGoneMu at the very top so
+	// removeStaleRuntime mutex contention can't push it past a sibling's
+	// register completion, and so the ordering does not depend on wall-clock
+	// precision.
 	d.runtimeGoneMu.Lock()
+	d.reregisterEventSeq++
+	entrySeq := d.reregisterEventSeq
 	if _, inflight := d.runtimeGoneInflight[runtimeID]; inflight {
 		d.runtimeGoneMu.Unlock()
 		return
@@ -366,14 +375,14 @@ func (d *Daemon) handleRuntimeGone(runtimeID string) {
 		"runtime_id", runtimeID, "workspace_id", workspaceID)
 	d.notifyRuntimeSetChanged()
 
-	if !d.tryClaimRegisterSlot(workspaceID, entryAt, time.Now()) {
+	if !d.tryClaimRegisterSlot(workspaceID, entrySeq, time.Now()) {
 		d.logger.Debug("skip re-register: coalescing with recent attempt",
 			"workspace_id", workspaceID)
 		return
 	}
 
 	err := d.reregisterWorkspaceAfterRuntimeGone(d.recoveryContext(), workspaceID)
-	d.recordRegisterCompletion(workspaceID, time.Now(), err)
+	d.recordRegisterCompletion(workspaceID, entrySeq, time.Now(), err)
 	if err != nil {
 		// Logged at Warn (not Error) because workspaceSyncLoop retries
 		// independently every DefaultWorkspaceSyncInterval, so a transient
@@ -392,24 +401,24 @@ func (d *Daemon) handleRuntimeGone(runtimeID string) {
 //
 //  1. reregisterNextAttempt: a future timestamp means a peer holds the slot or
 //     a previous attempt failed and we are inside the failure backoff window.
-//  2. reregisterLastCompletedAt: a timestamp at or after our entryAt means a
+//  2. reregisterLastCompletedSeq: a sequence at or after our entrySeq means a
 //     peer's register SUCCEEDED after we entered handleRuntimeGone, so the
 //     workspace state is already covered for our wave and we can bail.
 //     Failures intentionally don't stamp this field (see
-//     recordRegisterCompletion), so a same-wave straggler whose entryAt
+//     recordRegisterCompletion), so a same-wave straggler whose entrySeq
 //     predates a failed sibling can still retry once the failure backoff
 //     expires — failures don't cover anything.
 //
-// entryAt is the wall-clock captured at the top of handleRuntimeGone. now is
-// passed in (rather than read inside) so tests can drive the gate
-// deterministically without sleeping.
-func (d *Daemon) tryClaimRegisterSlot(workspaceID string, entryAt, now time.Time) bool {
+// entrySeq is the monotonically increasing sequence captured at the top of
+// handleRuntimeGone. now is passed in (rather than read inside) so tests can
+// drive the failure-backoff gate deterministically without sleeping.
+func (d *Daemon) tryClaimRegisterSlot(workspaceID string, entrySeq uint64, now time.Time) bool {
 	d.runtimeGoneMu.Lock()
 	defer d.runtimeGoneMu.Unlock()
 	if next, ok := d.reregisterNextAttempt[workspaceID]; ok && now.Before(next) {
 		return false
 	}
-	if last, ok := d.reregisterLastCompletedAt[workspaceID]; ok && !last.Before(entryAt) {
+	if last, ok := d.reregisterLastCompletedSeq[workspaceID]; ok && last >= entrySeq {
 		return false
 	}
 	d.reregisterNextAttempt[workspaceID] = now.Add(reregisterCoalesceWindow)
@@ -417,23 +426,23 @@ func (d *Daemon) tryClaimRegisterSlot(workspaceID string, entryAt, now time.Time
 }
 
 // recordRegisterCompletion records the outcome of a register call. On success
-// it stamps lastCompletedAt (which suppresses same-wave stragglers via
+// it stamps lastCompletedSeq (which suppresses same-wave stragglers via
 // tryClaimRegisterSlot) and clears the in-flight slot so a genuinely later
 // runtime deletion can claim immediately. On failure it extends
 // reregisterNextAttempt by the failure backoff and intentionally does NOT
-// stamp lastCompletedAt — a failed register did not cover any workspace
-// state, so a same-wave straggler whose entryAt predates the failure must
+// stamp lastCompletedSeq — a failed register did not cover any workspace
+// state, so a same-wave straggler whose entrySeq predates the failure must
 // still be allowed to retry once the backoff expires. workspaceSyncLoop only
 // retries when the workspace's runtimeIDs fully drain, so partial-deletion
 // recovery has to come from the straggler path.
-func (d *Daemon) recordRegisterCompletion(workspaceID string, completedAt time.Time, err error) {
+func (d *Daemon) recordRegisterCompletion(workspaceID string, completedSeq uint64, completedAt time.Time, err error) {
 	d.runtimeGoneMu.Lock()
 	defer d.runtimeGoneMu.Unlock()
 	if err != nil {
 		d.reregisterNextAttempt[workspaceID] = completedAt.Add(reregisterFailureBackoff)
 		return
 	}
-	d.reregisterLastCompletedAt[workspaceID] = completedAt
+	d.reregisterLastCompletedSeq[workspaceID] = completedSeq
 	delete(d.reregisterNextAttempt, workspaceID)
 }
 
@@ -1684,19 +1693,35 @@ func (d *Daemon) tryRenewToken(ctx context.Context) {
 }
 
 // workspaceSyncLoop periodically fetches the user's workspaces from the API
-// and registers runtimes for any new ones.
+// and registers runtimes for any new ones. A WS connect/reconnect broadcast
+// triggers an immediate sync so runtime/repo changes the server applied during
+// the WS gap are picked up sub-second instead of after the next 30s tick.
 func (d *Daemon) workspaceSyncLoop(ctx context.Context) {
 	ticker := time.NewTicker(DefaultWorkspaceSyncInterval)
 	defer ticker.Stop()
+
+	var reconcileCh <-chan struct{}
+	if d.reconcile != nil {
+		reconcileCh = d.reconcile.notify()
+	}
+
+	sync := func() {
+		if err := d.syncWorkspacesFromAPI(ctx); err != nil {
+			d.logger.Debug("workspace sync failed", "error", err)
+		}
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			if err := d.syncWorkspacesFromAPI(ctx); err != nil {
-				d.logger.Debug("workspace sync failed", "error", err)
+		case <-reconcileCh:
+			if d.reconcile != nil {
+				reconcileCh = d.reconcile.notify()
 			}
+			sync()
+		case <-ticker.C:
+			sync()
 		}
 	}
 }
@@ -1905,7 +1930,19 @@ func (d *Daemon) runRuntimeHeartbeat(ctx context.Context, rid string) {
 		}
 	}
 
-	d.runHeartbeatTick(ctx, rid)
+	consecutiveTransientFailures := 0
+	tick := func() {
+		if d.runHeartbeatTick(ctx, rid) {
+			consecutiveTransientFailures++
+			if consecutiveTransientFailures == 2 {
+				d.client.CloseIdleConnections()
+			}
+			return
+		}
+		consecutiveTransientFailures = 0
+	}
+
+	tick()
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -1914,12 +1951,14 @@ func (d *Daemon) runRuntimeHeartbeat(ctx context.Context, rid string) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			d.runHeartbeatTick(ctx, rid)
+			tick()
 		}
 	}
 }
 
-func (d *Daemon) runHeartbeatTick(ctx context.Context, rid string) {
+// runHeartbeatTick returns true when the HTTP heartbeat hit a transient
+// failure that should count toward stale idle-connection cleanup.
+func (d *Daemon) runHeartbeatTick(ctx context.Context, rid string) bool {
 	// Skip HTTP heartbeat for runtimes that successfully acked a recent
 	// WebSocket heartbeat. The WS path keeps last_seen_at fresh and delivers
 	// actions, so the HTTP write would be a duplicate DB update. If the WS
@@ -1928,7 +1967,7 @@ func (d *Daemon) runHeartbeatTick(ctx context.Context, rid string) {
 	// relies on.
 	if d.wsHeartbeatRecentlyAcked(rid) {
 		d.logger.Debug("heartbeat: skipping HTTP tick, WS recently acked", "runtime_id", rid)
-		return
+		return false
 	}
 	d.logger.Debug("heartbeat: HTTP tick", "runtime_id", rid)
 	resp, err := d.client.SendHeartbeat(ctx, rid)
@@ -1941,20 +1980,21 @@ func (d *Daemon) runHeartbeatTick(ctx context.Context, rid string) {
 				// the daemon root context so notifyRuntimeSetChanged
 				// tearing down this heartbeat goroutine cannot abort it.
 				go d.handleRuntimeGone(rid)
-				return
+				return false
 			}
 			d.logger.Warn("heartbeat failed", "runtime_id", rid, "error", err)
 		}
-		return
+		return ctx.Err() == nil && isTransientError(err)
 	}
 	if resp != nil && resp.RuntimeGone {
 		// The WS path returns a successful ack with RuntimeGone=true for the
 		// same scenario; treat it the same way here in case HTTP starts
 		// surfacing this signal too.
 		go d.handleRuntimeGone(rid)
-		return
+		return false
 	}
 	d.handleHeartbeatActions(ctx, rid, resp)
+	return false
 }
 
 // handleHeartbeatActions dispatches the pending-action set returned by either
@@ -2738,25 +2778,48 @@ func shouldInterruptAgent(status string, err error) bool {
 // so callers should pass the runCtx that was set up around the agent run.
 func (d *Daemon) watchTaskCancellation(ctx context.Context, taskID string, pollInterval time.Duration, taskLog *slog.Logger) <-chan struct{} {
 	cancelled := make(chan struct{})
+	// Subscribe to the reconcile broadcaster before launching the inner
+	// goroutine. A WS reconnect that fires between the goroutine starting
+	// and its first notify() call would otherwise be dropped; the ticker
+	// still bounds the worst case, but the whole point of the broadcast is
+	// to avoid waiting on that ticker.
+	var reconcileCh <-chan struct{}
+	if d.reconcile != nil {
+		reconcileCh = d.reconcile.notify()
+	}
 	go func() {
 		ticker := time.NewTicker(pollInterval)
 		defer ticker.Stop()
+		check := func() bool {
+			status, err := d.client.GetTaskStatus(ctx, taskID)
+			if !shouldInterruptAgent(status, err) {
+				return false
+			}
+			if err != nil {
+				taskLog.Info("task gone server-side, interrupting agent", "error", err)
+			} else {
+				taskLog.Info("task reached terminal state server-side, interrupting agent", "status", status)
+			}
+			close(cancelled)
+			return true
+		}
 		for {
 			select {
 			case <-ctx.Done():
 				return
+			case <-reconcileCh:
+				// Refresh the subscription before issuing the request so a
+				// second broadcast that overlaps GetTaskStatus is not lost.
+				if d.reconcile != nil {
+					reconcileCh = d.reconcile.notify()
+				}
+				if check() {
+					return
+				}
 			case <-ticker.C:
-				status, err := d.client.GetTaskStatus(ctx, taskID)
-				if !shouldInterruptAgent(status, err) {
-					continue
+				if check() {
+					return
 				}
-				if err != nil {
-					taskLog.Info("task gone server-side, interrupting agent", "error", err)
-				} else {
-					taskLog.Info("task reached terminal state server-side, interrupting agent", "status", status)
-				}
-				close(cancelled)
-				return
 			}
 		}
 	}()
@@ -3214,23 +3277,20 @@ func (d *Daemon) ensureTaskSkillBundles(ctx context.Context, task *Task) error {
 		}
 	}
 
-	if len(misses) > 0 {
-		bundles, err := d.client.ResolveSkillBundles(ctx, task.RuntimeID, task.ID, misses)
+	// Resolve each missing bundle in its own request, caching it the moment it
+	// arrives. The download is the slow part on jittery links, so fetching the
+	// whole set in one atomic body read meant a single timeout discarded all
+	// progress and the cache never converged — every dispatch re-downloaded
+	// everything and timed out again. Per-skill, each download fits its own
+	// size-scaled deadline and is persisted independently, so even a dispatch
+	// that ultimately fails leaves the skills it did fetch cached for the next
+	// one. (GitHub #4505 / MUL-3650)
+	for _, ref := range misses {
+		bundle, err := d.resolveSkillBundle(ctx, task, ref)
 		if err != nil {
 			return fmt.Errorf("resolve skill bundles: %w", err)
 		}
-		for _, bundle := range bundles {
-			ref := skillRefFromBundle(bundle)
-			if !validateSkillBundle(ref, bundle) {
-				return fmt.Errorf("resolve skill bundle returned invalid bundle: skill_id=%s source=%s hash=%s", bundle.ID, bundle.Source, bundle.Hash)
-			}
-			if err := d.skillCache.WithRefLock(task.WorkspaceID, ref, func() error {
-				return d.skillCache.Store(task.WorkspaceID, bundle)
-			}); err != nil {
-				return fmt.Errorf("store skill bundle cache: %w", err)
-			}
-			resolved[skillRefKey(bundle.Source, bundle.ID)] = bundle
-		}
+		resolved[skillRefKey(bundle.Source, bundle.ID)] = bundle
 	}
 
 	skills := make([]SkillData, 0, len(task.Agent.SkillRefs))
@@ -3243,6 +3303,71 @@ func (d *Daemon) ensureTaskSkillBundles(ctx context.Context, task *Task) error {
 	}
 	task.Agent.Skills = skills
 	return nil
+}
+
+// resolveSkillBundle downloads one skill bundle and writes it to the on-disk
+// cache before returning. The request runs under its own deadline, scaled to
+// the bundle's declared size rather than the daemon's fixed 30s control-plane
+// timeout, so a large bundle on a slow link is given room to finish instead of
+// being cut off mid-body. Caching on success is what lets the resolve converge
+// across dispatches. (GitHub #4505 / MUL-3650)
+func (d *Daemon) resolveSkillBundle(ctx context.Context, task *Task, ref SkillRefData) (SkillData, error) {
+	reqCtx, cancel := context.WithTimeout(ctx, skillBundleResolveTimeout(ref.SizeBytes))
+	defer cancel()
+
+	bundle, err := d.client.ResolveSkillBundle(reqCtx, task.RuntimeID, task.ID, ref)
+	if err != nil {
+		return SkillData{}, err
+	}
+	// The resolve endpoint serves the agent's *current* bundle and hash, which
+	// may differ from the claim-time ref when the skill was edited between
+	// claim and prepare (see ResolveTaskSkillBundles). So confirm only that the
+	// server returned the skill we asked for (source/id), then validate the
+	// bundle for self-consistency against a ref derived from itself — pinning
+	// it to the possibly-stale requested hash would reject a legitimate update.
+	if bundle.Source != ref.Source || bundle.ID != ref.ID {
+		return SkillData{}, fmt.Errorf("resolve skill bundle returned wrong skill: requested source=%s id=%s, got source=%s id=%s", ref.Source, ref.ID, bundle.Source, bundle.ID)
+	}
+	bundleRef := skillRefFromBundle(bundle)
+	if !validateSkillBundle(bundleRef, bundle) {
+		return SkillData{}, fmt.Errorf("resolve skill bundle returned invalid bundle: skill_id=%s source=%s hash=%s", bundle.ID, bundle.Source, bundle.Hash)
+	}
+	if err := d.skillCache.WithRefLock(task.WorkspaceID, bundleRef, func() error {
+		return d.skillCache.Store(task.WorkspaceID, bundle)
+	}); err != nil {
+		return SkillData{}, fmt.Errorf("store skill bundle cache: %w", err)
+	}
+	return bundle, nil
+}
+
+const (
+	// skillBundleResolveMinTimeout floors the per-skill resolve deadline so a
+	// tiny bundle still tolerates connection setup and round-trip latency.
+	skillBundleResolveMinTimeout = 30 * time.Second
+	// skillBundleResolveMaxTimeout caps it so a wedged download cannot pin a
+	// task in prepare indefinitely.
+	skillBundleResolveMaxTimeout = 5 * time.Minute
+	// skillBundleResolveMinThroughput is the pessimistic floor throughput
+	// (bytes/sec) used to scale the deadline to bundle size — deliberately low
+	// to cover slow, jittery links rather than ideal bandwidth.
+	skillBundleResolveMinThroughput = 50 * 1024
+)
+
+// skillBundleResolveTimeout returns the deadline budget for downloading a
+// bundle of the given size: at least skillBundleResolveMinTimeout, scaled up at
+// skillBundleResolveMinThroughput, and capped at skillBundleResolveMaxTimeout.
+func skillBundleResolveTimeout(sizeBytes int64) time.Duration {
+	if sizeBytes <= 0 {
+		return skillBundleResolveMinTimeout
+	}
+	scaled := time.Duration(sizeBytes/skillBundleResolveMinThroughput) * time.Second
+	if scaled < skillBundleResolveMinTimeout {
+		return skillBundleResolveMinTimeout
+	}
+	if scaled > skillBundleResolveMaxTimeout {
+		return skillBundleResolveMaxTimeout
+	}
+	return scaled
 }
 
 func (d *Daemon) startTaskPrepareLeaseExtender(ctx context.Context, task Task, taskLog *slog.Logger) func() {
