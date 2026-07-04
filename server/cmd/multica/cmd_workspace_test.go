@@ -38,8 +38,9 @@ func TestRunWorkspaceSwitch(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// Isolate HOME so the test never touches the developer's ~/.multica.
-	t.Setenv("HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("MULTICA_SERVER_URL", srv.URL)
 	t.Setenv("MULTICA_TOKEN", "test-token")
 	t.Setenv("MULTICA_WORKSPACE_ID", "")
