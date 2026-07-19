@@ -8,6 +8,16 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func TestNormalizeEmbeddedSkillContentCRLF(t *testing.T) {
+	got := normalizeEmbeddedSkillContent([]byte("---\r\nname: sample\r\n---\r\nbody\r\n"))
+	if strings.Contains(got, "\r\n") {
+		t.Fatalf("normalized content still contains CRLF: %q", got)
+	}
+	if got != "---\nname: sample\n---\nbody\n" {
+		t.Fatalf("normalized content = %q", got)
+	}
+}
+
 // Built-in skills are the platform's standard "template" skills. These evals
 // pin the template every skill must follow and — crucially — couple each
 // skill's documented contract to the real backend behavior it describes, so a

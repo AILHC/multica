@@ -76,44 +76,103 @@ describe("AccessPicker owner-only editing (MUL-3963)", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders an interactive trigger for the owner", () => {
+  it("renders mutually exclusive access scopes for the owner", () => {
     renderPicker({ canEdit: true });
-    expect(screen.getByRole("button")).toBeInTheDocument();
-    // Private is the default summary.
-    expect(screen.getAllByText("Only me").length).toBeGreaterThan(0);
+    expect(
+      screen.getByRole("radio", { name: /^Only me/i }),
+    ).toBeChecked();
+    expect(
+      screen.getByRole("radio", { name: /^Entire workspace/i }),
+    ).not.toBeChecked();
+    expect(
+      screen.getByRole("radio", { name: /^Specific people/i }),
+    ).not.toBeChecked();
+  });
+
+  it("lets the owner grant the entire workspace access", () => {
+    const { onChange } = renderPicker({ canEdit: true });
+    fireEvent.click(
+      screen.getByRole("radio", { name: /^Entire workspace/i }),
+    );
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(onChange).toHaveBeenCalledWith({
+      permission_mode: "public_to",
+      invocation_targets: [{ target_type: "workspace" }],
+    });
+  });
+
+  it("reports an unsaved draft until the owner returns to the persisted mode", () => {
+    const onDirtyChange = vi.fn();
+    renderPicker({ canEdit: true, onDirtyChange });
+
+    fireEvent.click(
+      screen.getByRole("radio", { name: /^Entire workspace/i }),
+    );
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+
+    fireEvent.click(screen.getByRole("radio", { name: /^Only me/i }));
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false);
   });
 
   it("owner can pick a specific member, emitting a public_to member target", () => {
-    const { onChange } = renderPicker({ canEdit: true });
-    fireEvent.click(screen.getByRole("button"));
-    // Checkbox order in the open popover: [0] workspace, [1] Alice, [2] Bob.
-    const boxes = screen.getAllByRole("checkbox");
-    fireEvent.click(boxes[1]!);
+    const { onChange } = renderPicker({
+      canEdit: true,
+    });
+    fireEvent.click(
+      screen.getByRole("radio", { name: /^Specific people/i }),
+    );
+    fireEvent.click(screen.getByRole("checkbox", { name: /Alice/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(onChange).toHaveBeenCalledWith({
       permission_mode: "public_to",
       invocation_targets: [{ target_type: "member", target_id: "u1" }],
     });
   });
 
-  it("owner can stack workspace + a member (mixed, multi-select)", () => {
-    // Start from a member target; toggling the workspace checkbox must ADD a
-    // workspace target rather than replacing the member one.
+  it("workspace scope removes redundant member grants", () => {
     const { onChange } = renderPicker({
       canEdit: true,
       permissionMode: "public_to",
       invocationTargets: [{ target_type: "member", target_id: "u1" }],
       visibility: "private",
     });
-    fireEvent.click(screen.getByRole("button"));
-    const boxes = screen.getAllByRole("checkbox");
-    // [0] is the "Everyone in workspace" toggle.
-    fireEvent.click(boxes[0]!);
+    fireEvent.click(screen.getByRole("radio", { name: /^Entire workspace/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(onChange).toHaveBeenCalledWith({
       permission_mode: "public_to",
-      invocation_targets: [
-        { target_type: "workspace" },
-        { target_type: "member", target_id: "u1" },
-      ],
+      invocation_targets: [{ target_type: "workspace" }],
     });
+  });
+
+  // Regression: GH #4915. Older self-host backends / stale caches may return
+  // an agent without `invocation_targets` even though the modern type says
+  // required-array. The picker must degrade gracefully to the "Private" /
+  // empty-allowlist summary instead of crashing the whole agent detail
+  // route with "Cannot read properties of undefined (reading 'some')".
+  it("renders without crashing when invocationTargets is undefined", () => {
+    expect(() =>
+      renderPicker({
+        // Force the runtime shape produced by a legacy backend response.
+        invocationTargets: undefined as unknown as AgentInvocationTarget[],
+      }),
+    ).not.toThrow();
+    expect(
+      screen.getByRole("radio", { name: /^Only me/i }),
+    ).toBeChecked();
+  });
+
+  it("read-only mode: undefined invocationTargets does not crash for non-owners", () => {
+    expect(() =>
+      renderPicker({
+        canEdit: false,
+        permissionMode: "public_to",
+        invocationTargets: undefined as unknown as AgentInvocationTarget[],
+        visibility: "workspace",
+      }),
+    ).not.toThrow();
+    // No workspace target in the (empty) list ⇒ shows the "no members" state
+    // rather than the workspace one, which is the safe degradation.
+    expect(screen.getByTestId("access-readonly")).toBeInTheDocument();
   });
 });
