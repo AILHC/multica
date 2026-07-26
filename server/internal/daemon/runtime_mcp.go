@@ -32,13 +32,13 @@ type runtimeLocalMcpServerSummary struct {
 // A present config (including an empty mcpServers map) opts into the merged,
 // task-local config so adding one managed server no longer disables unrelated
 // runtime servers.
-func mergeRuntimeAndAgentMcpConfig(provider string, agentConfig json.RawMessage) (json.RawMessage, error) {
+func mergeRuntimeAndAgentMcpConfig(provider, sharedCodexHome string, agentConfig json.RawMessage) (json.RawMessage, error) {
 	trimmed := bytes.TrimSpace(agentConfig)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 		return agentConfig, nil
 	}
 
-	runtimeServers, supported, err := loadRuntimeMcpServerConfigs(provider)
+	runtimeServers, supported, err := loadRuntimeMcpServerConfigs(provider, sharedCodexHome)
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +81,7 @@ func mergeRuntimeAndAgentMcpConfig(provider string, agentConfig json.RawMessage)
 // for task-local merging. Callers must never send the result to the server or
 // logs; the public capabilities endpoint continues to use the redacted summary
 // type above.
-func loadRuntimeMcpServerConfigs(provider string) (map[string]any, bool, error) {
+func loadRuntimeMcpServerConfigs(provider, sharedCodexHome string) (map[string]any, bool, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, false, fmt.Errorf("resolve user home: %w", err)
@@ -92,7 +92,10 @@ func loadRuntimeMcpServerConfigs(provider string) (map[string]any, bool, error) 
 	case "claude", "codebuddy":
 		path, key, format = filepath.Join(home, ".claude.json"), "mcpServers", "json"
 	case "codex":
-		codexHome := strings.TrimSpace(os.Getenv("CODEX_HOME"))
+		codexHome := strings.TrimSpace(sharedCodexHome)
+		if codexHome == "" {
+			codexHome = strings.TrimSpace(os.Getenv("CODEX_HOME"))
+		}
 		if codexHome == "" {
 			codexHome = filepath.Join(home, ".codex")
 		}
@@ -204,7 +207,7 @@ func loadClaudePluginMcpServerConfigs(home string) map[string]any {
 	return out
 }
 
-func listRuntimeLocalMcpServers(provider string) ([]runtimeLocalMcpServerSummary, bool, error) {
+func listRuntimeLocalMcpServers(provider, sharedCodexHome string) ([]runtimeLocalMcpServerSummary, bool, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, false, fmt.Errorf("resolve user home: %w", err)
@@ -216,7 +219,10 @@ func listRuntimeLocalMcpServers(provider string) ([]runtimeLocalMcpServerSummary
 	case "claude", "codebuddy":
 		path, key, source, format = filepath.Join(home, ".claude.json"), "mcpServers", "User config", "json"
 	case "codex":
-		codexHome := strings.TrimSpace(os.Getenv("CODEX_HOME"))
+		codexHome := strings.TrimSpace(sharedCodexHome)
+		if codexHome == "" {
+			codexHome = strings.TrimSpace(os.Getenv("CODEX_HOME"))
+		}
 		if codexHome == "" {
 			codexHome = filepath.Join(home, ".codex")
 		}

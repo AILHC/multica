@@ -2,9 +2,11 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -61,6 +63,39 @@ func TestReportLocalSkillListResult_RetriesOn500AndEventuallySucceeds(t *testing
 
 	if got := atomic.LoadInt32(calls); got != 3 {
 		t.Fatalf("expected 3 attempts (2 failures + 1 success), got %d", got)
+	}
+}
+
+func TestHandleLocalSkillListUsesDaemonSharedCodexHome(t *testing.T) {
+	profileHome := t.TempDir()
+	envHome := t.TempDir()
+	t.Setenv("CODEX_HOME", envHome)
+	writeTestLocalSkill(t, filepath.Join(profileHome, "skills"), "profile-skill", map[string]string{
+		"SKILL.md": "---\nname: Profile Skill\n---\n",
+	})
+	writeTestLocalSkill(t, filepath.Join(envHome, "skills"), "env-skill", map[string]string{
+		"SKILL.md": "---\nname: Environment Skill\n---\n",
+	})
+
+	var reported struct {
+		Skills []runtimeLocalSkillSummary `json:"skills"`
+	}
+	d, _ := localSkillReportDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&reported); err != nil {
+			t.Errorf("decode local skill report: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
+	d.cfg.SharedCodexHome = profileHome
+	d.handleLocalSkillList(context.Background(), Runtime{ID: "rt-codex", Provider: "codex"}, "req-profile-home")
+
+	keys := make(map[string]bool, len(reported.Skills))
+	for _, item := range reported.Skills {
+		keys[item.Key] = true
+	}
+	if !keys["profile-skill"] || keys["env-skill"] {
+		t.Fatalf("reported skills = %#v, want daemon profile home only", reported.Skills)
 	}
 }
 

@@ -27,7 +27,7 @@ enabled = false
 		t.Fatal(err)
 	}
 
-	servers, supported, err := listRuntimeLocalMcpServers("codex")
+	servers, supported, err := listRuntimeLocalMcpServers("codex", configDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ enabled = false
 
 func TestListRuntimeLocalMcpServersClaudeMissingConfig(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	servers, supported, err := listRuntimeLocalMcpServers("claude")
+	servers, supported, err := listRuntimeLocalMcpServers("claude", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestListRuntimeLocalMcpServersClaudeEnabledPlugin(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	servers, supported, err := listRuntimeLocalMcpServers("claude")
+	servers, supported, err := listRuntimeLocalMcpServers("claude", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestListRuntimeLocalMcpServersClaudeEnabledPlugin(t *testing.T) {
 
 func TestListRuntimeLocalMcpServersUnknownProvider(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	servers, supported, err := listRuntimeLocalMcpServers("future-runtime")
+	servers, supported, err := listRuntimeLocalMcpServers("future-runtime", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestMergeRuntimeAndAgentMcpConfigClaudeCombinesAndAgentWins(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	merged, err := mergeRuntimeAndAgentMcpConfig("claude", json.RawMessage(`{"mcpServers":{"shared":{"command":"agent-shared"},"agent-only":{"url":"https://agent.example/mcp"}}}`))
+	merged, err := mergeRuntimeAndAgentMcpConfig("claude", "", json.RawMessage(`{"mcpServers":{"shared":{"command":"agent-shared"},"agent-only":{"url":"https://agent.example/mcp"}}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ args = ["mcp-server-fetch"]
 		t.Fatal(err)
 	}
 
-	merged, err := mergeRuntimeAndAgentMcpConfig("codex", json.RawMessage(`{"mcpServers":{"agent":{"command":"node","args":["agent.js"]}}}`))
+	merged, err := mergeRuntimeAndAgentMcpConfig("codex", configDir, json.RawMessage(`{"mcpServers":{"agent":{"command":"node","args":["agent.js"]}}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,10 +169,55 @@ args = ["mcp-server-fetch"]
 	}
 }
 
+func TestCodexRuntimeMcpUsesResolvedSharedHome(t *testing.T) {
+	home := t.TempDir()
+	profileHome := t.TempDir()
+	envHome := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", envHome)
+
+	for _, fixture := range []struct {
+		home string
+		name string
+	}{
+		{home: profileHome, name: "profile-server"},
+		{home: envHome, name: "env-server"},
+	} {
+		if err := os.WriteFile(filepath.Join(fixture.home, "config.toml"), []byte("[mcp_servers."+fixture.name+"]\ncommand = \"node\"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	servers, supported, err := listRuntimeLocalMcpServers("codex", profileHome)
+	if err != nil || !supported {
+		t.Fatalf("listRuntimeLocalMcpServers: supported=%v err=%v", supported, err)
+	}
+	if len(servers) != 1 || servers[0].Name != "profile-server" {
+		t.Fatalf("listed servers = %#v, want only profile-server", servers)
+	}
+
+	merged, err := mergeRuntimeAndAgentMcpConfig("codex", profileHome, json.RawMessage(`{"mcpServers":{"managed":{"command":"managed"}}}`))
+	if err != nil {
+		t.Fatalf("mergeRuntimeAndAgentMcpConfig: %v", err)
+	}
+	var document struct {
+		McpServers map[string]map[string]any `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(merged, &document); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := document.McpServers["env-server"]; exists {
+		t.Fatalf("process CODEX_HOME server leaked into managed merge: %#v", document.McpServers)
+	}
+	if len(document.McpServers) != 2 || document.McpServers["profile-server"] == nil || document.McpServers["managed"] == nil {
+		t.Fatalf("merged servers = %#v, want profile and managed servers", document.McpServers)
+	}
+}
+
 func TestMergeRuntimeAndAgentMcpConfigNullKeepsNativeInheritance(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	for _, raw := range []json.RawMessage{nil, json.RawMessage("null"), json.RawMessage(" null ")} {
-		merged, err := mergeRuntimeAndAgentMcpConfig("claude", raw)
+		merged, err := mergeRuntimeAndAgentMcpConfig("claude", "", raw)
 		if err != nil {
 			t.Fatal(err)
 		}
