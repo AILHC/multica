@@ -262,7 +262,7 @@ while IFS= read -r line; do
       printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"ses_model","models":{"currentModelId":"qoder:auto","availableModels":[{"modelId":"qoder:auto","name":"Qoder Auto"}]}}}\n' "$id"
       ;;
     *'"method":"session/prompt"'*)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn","usage":{"inputTokens":17,"outputTokens":5,"cachedReadTokens":3}}}\n' "$id"
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn","usage":{"inputTokens":17,"outputTokens":5,"cachedReadTokens":3,"cachedWriteTokens":2,"costUsdTicks":900}}}\n' "$id"
       exit 0
       ;;
   esac
@@ -703,15 +703,19 @@ func TestQoderForwardsMcpAuthHeaderToSessionNew(t *testing.T) {
 
 	tempDir := t.TempDir()
 	rpcFile := filepath.Join(tempDir, "rpc.txt")
-	fakePath := filepath.Join(tempDir, "qodercli")
-	writeTestExecutable(t, fakePath, []byte(fakeQoderACPScriptCapturingRPC()))
+	fakePath, err := os.Executable()
+	if err != nil {
+		t.Fatalf("locate test executable: %v", err)
+	}
 
 	backend, err := New("qoder", Config{
 		ExecutablePath: fakePath,
 		Logger:         slog.Default(),
 		Env: map[string]string{
-			"QODER_RPC_FILE":     rpcFile,
-			"QODER_INIT_MCP_SSE": "1",
+			acpRecordingHelperModeEnv:      "qoder",
+			acpRecordingHelperRecordEnv:    rpcFile,
+			acpRecordingHelperSessionIDEnv: "ses_fake",
+			"QODER_INIT_MCP_SSE":           "1",
 		},
 	})
 	if err != nil {
@@ -759,18 +763,27 @@ func TestQoderForwardsMcpAuthHeaderToSessionNew(t *testing.T) {
 	}
 }
 
+// Qoder is not on the omitted-capabilities exception list, so it keeps the
+// ACP v1 default: capabilities the runtime never advertised are unsupported
+// and remote entries are filtered out of session/new.
 func TestQoderFiltersRemoteMcpWhenInitializeDoesNotAdvertiseCapability(t *testing.T) {
 	t.Parallel()
 
 	tempDir := t.TempDir()
 	rpcFile := filepath.Join(tempDir, "rpc.txt")
-	fakePath := filepath.Join(tempDir, "qodercli")
-	writeTestExecutable(t, fakePath, []byte(fakeQoderACPScriptCapturingRPC()))
+	fakePath, err := os.Executable()
+	if err != nil {
+		t.Fatalf("locate test executable: %v", err)
+	}
 
 	backend, err := New("qoder", Config{
 		ExecutablePath: fakePath,
 		Logger:         slog.Default(),
-		Env:            map[string]string{"QODER_RPC_FILE": rpcFile},
+		Env: map[string]string{
+			acpRecordingHelperModeEnv:      "qoder",
+			acpRecordingHelperRecordEnv:    rpcFile,
+			acpRecordingHelperSessionIDEnv: "ses_fake",
+		},
 	})
 	if err != nil {
 		t.Fatalf("new qoder backend: %v", err)
@@ -899,8 +912,8 @@ func TestQoderBackendAttributesUsageToACPDefaultModel(t *testing.T) {
 		if !ok {
 			t.Fatalf("expected usage under Qoder current model, got %+v", result.Usage)
 		}
-		if usage.InputTokens != 17 || usage.OutputTokens != 5 || usage.CacheReadTokens != 3 {
-			t.Fatalf("usage = %+v, want input=17 output=5 cache_read=3", usage)
+		if usage != (TokenUsage{InputTokens: 17, OutputTokens: 5, CacheReadTokens: 3, CacheWriteTokens: 2, CostUSDTicks: 900}) {
+			t.Fatalf("usage = %+v, want all prompt-result fields", usage)
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("timeout waiting for result")
