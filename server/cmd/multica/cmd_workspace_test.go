@@ -41,6 +41,22 @@ func newWorkspaceCreateTestCmd() *cobra.Command {
 	return cmd
 }
 
+func isolateWorkspaceTestHome(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	configPath, err := cli.CLIConfigPath()
+	if err != nil {
+		t.Fatalf("resolve isolated CLI config path: %v", err)
+	}
+	want := filepath.Join(home, ".multica", "config.json")
+	if filepath.Clean(configPath) != filepath.Clean(want) {
+		t.Fatalf("CLI config path = %q, want isolated path %q", configPath, want)
+	}
+}
+
 // decodeWorkspaceCreateBody mirrors the real POST /api/workspaces contract:
 // it rejects a body missing name or slug with 400 (as CreateWorkspace does) so
 // a CLI regression that drops slug surfaces as a failing request instead of
@@ -88,7 +104,7 @@ func TestRunWorkspaceCreatePostsWorkspaceAndDoesNotSwitchDefault(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	t.Setenv("HOME", t.TempDir())
+	isolateWorkspaceTestHome(t)
 	t.Setenv("MULTICA_SERVER_URL", srv.URL)
 	t.Setenv("MULTICA_TOKEN", "test-token")
 	t.Setenv("MULTICA_WORKSPACE_ID", "existing-workspace")
@@ -177,8 +193,8 @@ func TestRunWorkspaceCreateRequiresSlug(t *testing.T) {
 func TestRunWorkspaceCreateRejectsDualStdin(t *testing.T) {
 	cmd := newWorkspaceCreateTestCmd()
 	for name, value := range map[string]string{
-		"name":             "Growth Team",
-		"slug":             "growth-team",
+		"name":              "Growth Team",
+		"slug":              "growth-team",
 		"description-stdin": "true",
 		"context-stdin":     "true",
 	} {
@@ -198,8 +214,8 @@ func TestRunWorkspaceCreateRejectsDualStdin(t *testing.T) {
 func TestRunWorkspaceCreateReadsDescriptionFromStdin(t *testing.T) {
 	cmd := newWorkspaceCreateTestCmd()
 	for name, value := range map[string]string{
-		"name":             "Growth Team",
-		"slug":             "growth-team",
+		"name":              "Growth Team",
+		"slug":              "growth-team",
 		"description-stdin": "true",
 	} {
 		if err := cmd.Flags().Set(name, value); err != nil {
@@ -243,7 +259,7 @@ func TestRunWorkspaceCreatePrintsTable(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	t.Setenv("HOME", t.TempDir())
+	isolateWorkspaceTestHome(t)
 	t.Setenv("MULTICA_SERVER_URL", srv.URL)
 	t.Setenv("MULTICA_TOKEN", "test-token")
 
@@ -279,9 +295,7 @@ func TestRunWorkspaceSwitch(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
+	isolateWorkspaceTestHome(t)
 	t.Setenv("MULTICA_SERVER_URL", srv.URL)
 	t.Setenv("MULTICA_TOKEN", "test-token")
 	t.Setenv("MULTICA_WORKSPACE_ID", "")
@@ -671,7 +685,7 @@ func TestWorkspaceMemberInviteCommandIsRegistered(t *testing.T) {
 }
 
 func TestRunWorkspaceMemberInvitePostsInvitation(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	isolateWorkspaceTestHome(t)
 	t.Setenv("MULTICA_TOKEN", "test-token")
 	t.Setenv("MULTICA_WORKSPACE_ID", "workspace-123")
 
@@ -716,7 +730,7 @@ func TestRunWorkspaceMemberInvitePostsInvitation(t *testing.T) {
 }
 
 func TestRunWorkspaceMemberInviteUsesWorkspaceArgAndRoleFlag(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	isolateWorkspaceTestHome(t)
 	t.Setenv("MULTICA_TOKEN", "test-token")
 
 	const wsUUID = "11111111-1111-1111-1111-111111111111"
@@ -748,7 +762,7 @@ func TestRunWorkspaceMemberInviteUsesWorkspaceArgAndRoleFlag(t *testing.T) {
 }
 
 func TestRunWorkspaceMemberInviteRejectsOwnerRole(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	isolateWorkspaceTestHome(t)
 	t.Setenv("MULTICA_TOKEN", "test-token")
 	t.Setenv("MULTICA_WORKSPACE_ID", "workspace-123")
 
@@ -770,7 +784,7 @@ func TestRunWorkspaceMemberInviteRejectsOwnerRole(t *testing.T) {
 }
 
 func TestRunWorkspaceMemberInviteRejectsUnknownRole(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	isolateWorkspaceTestHome(t)
 	t.Setenv("MULTICA_TOKEN", "test-token")
 	t.Setenv("MULTICA_WORKSPACE_ID", "workspace-123")
 
