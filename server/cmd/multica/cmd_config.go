@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -51,13 +52,11 @@ var configSetCmd = &cobra.Command{
 	Short: "Set a CLI configuration value",
 	Long: "Supported keys: " +
 		"server_url, app_url, workspace_id, " +
-		"device_name, workspaces_root, codex_home, runtime_name, " +
-		"max_concurrent_tasks, poll_interval, " +
+		"device_name, runtime_name, workspaces_root, codex_home, max_concurrent_tasks, poll_interval, " +
 		"heartbeat_interval, agent_timeout, " +
 		"codex_semantic_inactivity_timeout, codex_handshake_timeout, " +
 		"disable_auto_update, auto_update_check_interval, disable_auto_reload.\n\n" +
-		"The daemon keys (device_name, workspaces_root, codex_home, " +
-		"runtime_name, max_concurrent_tasks, " +
+		"The daemon keys (device_name, runtime_name, workspaces_root, codex_home, max_concurrent_tasks, " +
 		"poll_interval, heartbeat_interval, agent_timeout, " +
 		"codex_semantic_inactivity_timeout, codex_handshake_timeout, " +
 		"disable_auto_update, auto_update_check_interval, disable_auto_reload) mirror their " +
@@ -82,6 +81,9 @@ func init() {
 }
 
 func runConfigShow(cmd *cobra.Command, _ []string) error {
+	if err := requireTaskLocalConfigRoot(); err != nil {
+		return err
+	}
 	profile := resolveProfile(cmd)
 	cfg, err := cli.LoadCLIConfigForProfile(profile)
 	if err != nil {
@@ -97,9 +99,9 @@ func runConfigShow(cmd *cobra.Command, _ []string) error {
 	fmt.Fprintf(os.Stdout, "%-34s %s\n", "app_url:", valueOrDefault(cfg.AppURL, "(not set)"))
 	fmt.Fprintf(os.Stdout, "%-34s %s\n", "workspace_id:", valueOrDefault(cfg.WorkspaceID, "(not set)"))
 	fmt.Fprintf(os.Stdout, "%-34s %s\n", "device_name:", valueOrDefault(effectiveDeviceName(cfg), "(not set)"))
+	fmt.Fprintf(os.Stdout, "%-34s %s\n", "runtime_name:", valueOrDefault(cfg.RuntimeName, "(not set)"))
 	fmt.Fprintf(os.Stdout, "%-34s %s\n", "workspaces_root:", valueOrDefault(effectiveWorkspacesRoot(cfg), "(not set)"))
 	fmt.Fprintf(os.Stdout, "%-34s %s\n", "codex_home:", valueOrDefault(effectiveCodexHome(cfg), "(not set)"))
-	fmt.Fprintf(os.Stdout, "%-34s %s\n", "runtime_name:", valueOrDefault(cfg.RuntimeName, "(not set)"))
 	fmt.Fprintf(os.Stdout, "%-34s %s\n", "max_concurrent_tasks:", intOrDefault(cfg.MaxConcurrentTasks, "(not set)"))
 	fmt.Fprintf(os.Stdout, "%-34s %s\n", "poll_interval:", valueOrDefault(cfg.PollInterval, "(not set)"))
 	fmt.Fprintf(os.Stdout, "%-34s %s\n", "heartbeat_interval:", valueOrDefault(cfg.HeartbeatInterval, "(not set)"))
@@ -113,6 +115,9 @@ func runConfigShow(cmd *cobra.Command, _ []string) error {
 }
 
 func runConfigSet(cmd *cobra.Command, args []string) error {
+	if err := requireTaskLocalConfigRoot(); err != nil {
+		return err
+	}
 	key, value := args[0], args[1]
 
 	profile := resolveProfile(cmd)
@@ -129,7 +134,11 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Fprintf(os.Stderr, "Set %s = %s\n", key, value)
+	storedValue := value
+	if key == "workspaces_root" {
+		storedValue = cfg.WorkspacesRoot
+	}
+	fmt.Fprintf(os.Stderr, "Set %s = %s\n", key, storedValue)
 	return nil
 }
 
@@ -154,7 +163,20 @@ func applyConfigSet(cfg *cli.CLIConfig, key, value string) error {
 	case "device_name", "daemon.device_name":
 		cfg.DeviceName = value
 		clearLegacyDaemonField(cfg, "device_name")
-	case "workspaces_root", "daemon.workspaces_root":
+	case "workspaces_root":
+		value = strings.TrimSpace(value)
+		if value == "" {
+			cfg.WorkspacesRoot = ""
+			clearLegacyDaemonField(cfg, "workspaces_root")
+			return nil
+		}
+		root, err := filepath.Abs(value)
+		if err != nil {
+			return fmt.Errorf("resolve workspaces_root: %w", err)
+		}
+		cfg.WorkspacesRoot = root
+		clearLegacyDaemonField(cfg, "workspaces_root")
+	case "daemon.workspaces_root":
 		cfg.WorkspacesRoot = value
 		clearLegacyDaemonField(cfg, "workspaces_root")
 	case "codex_home", "daemon.codex_home":

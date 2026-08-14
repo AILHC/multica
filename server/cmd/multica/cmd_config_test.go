@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +20,8 @@ func newConfigTestCmd() *cobra.Command {
 
 func TestRunConfigSetPersistsSupportedKeysInProfile(t *testing.T) {
 	testHome(t)
+	workspacesRoot := filepath.Join(t.TempDir(), "multica-dev")
+	codexHome := filepath.Join(t.TempDir(), "codex-home")
 
 	cmd := newConfigTestCmd()
 	_ = cmd.Flags().Set("profile", "dev")
@@ -33,10 +37,10 @@ func TestRunConfigSetPersistsSupportedKeysInProfile(t *testing.T) {
 	if err := runConfigSet(cmd, []string{"workspace_id", "ws-123"}); err != nil {
 		t.Fatalf("runConfigSet workspace_id: %v", err)
 	}
-	if err := runConfigSet(cmd, []string{"workspaces_root", "F:\\ai-runtime\\multica\\workspaces"}); err != nil {
+	if err := runConfigSet(cmd, []string{"workspaces_root", workspacesRoot}); err != nil {
 		t.Fatalf("runConfigSet workspaces_root: %v", err)
 	}
-	if err := runConfigSet(cmd, []string{"codex_home", "F:\\ai-runtime\\multica\\codex-home"}); err != nil {
+	if err := runConfigSet(cmd, []string{"codex_home", codexHome}); err != nil {
 		t.Fatalf("runConfigSet codex_home: %v", err)
 	}
 	_ = stderr.read()
@@ -45,11 +49,8 @@ func TestRunConfigSetPersistsSupportedKeysInProfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadCLIConfigForProfile: %v", err)
 	}
-	if cfg.ServerURL != "http://127.0.0.1:8080" || cfg.AppURL != "http://127.0.0.1:3000" || cfg.WorkspaceID != "ws-123" {
+	if cfg.ServerURL != "http://127.0.0.1:8080" || cfg.AppURL != "http://127.0.0.1:3000" || cfg.WorkspaceID != "ws-123" || cfg.WorkspacesRoot != workspacesRoot || cfg.CodexHome != codexHome {
 		t.Fatalf("config = %#v, want persisted supported keys", cfg)
-	}
-	if cfg.WorkspacesRoot != "F:\\ai-runtime\\multica\\workspaces" || cfg.CodexHome != "F:\\ai-runtime\\multica\\codex-home" {
-		t.Fatalf("config = %#v, want persisted daemon path keys", cfg)
 	}
 }
 
@@ -70,9 +71,9 @@ func TestRunConfigShowIncludesProfileAndDefaults(t *testing.T) {
 		"app_url:",
 		"workspace_id:",
 		"device_name:",
+		"runtime_name:",
 		"workspaces_root:",
 		"codex_home:",
-		"runtime_name:",
 		"max_concurrent_tasks:",
 		"poll_interval:",
 		"heartbeat_interval:",
@@ -98,6 +99,92 @@ func TestRunConfigShowIncludesProfileAndDefaults(t *testing.T) {
 	}
 }
 
+func TestRunConfigCommandsUseTaskLocalConfigWithoutTouchingOwner(t *testing.T) {
+	ownerHome := t.TempDir()
+	taskRoot := filepath.Join(t.TempDir(), "task-multica")
+	t.Setenv("HOME", ownerHome)
+	t.Setenv("MULTICA_AGENT_ID", "agent-test")
+	t.Setenv("MULTICA_TASK_ID", "task-test")
+	t.Setenv("MULTICA_TASK_CONFIG_ROOT", taskRoot)
+
+	ownerPath := filepath.Join(ownerHome, ".multica", "config.json")
+	if err := os.MkdirAll(filepath.Dir(ownerPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ownerBytes := []byte("{\n  \"server_url\": \"https://owner.invalid\",\n  \"workspace_id\": \"owner-workspace-sentinel\",\n  \"token\": \"mul_owner_sentinel\"\n}\n")
+	if err := os.WriteFile(ownerPath, ownerBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ownerBefore, err := os.Stat(ownerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newConfigTestCmd()
+	if err := runConfigSet(cmd, []string{"server_url", "https://task.invalid"}); err != nil {
+		t.Fatalf("runConfigSet: %v", err)
+	}
+	out, err := captureStdout(t, func() error { return runConfigShow(cmd, nil) })
+	if err != nil {
+		t.Fatalf("runConfigShow: %v", err)
+	}
+	for _, forbidden := range []string{ownerHome, "https://owner.invalid", "owner-workspace-sentinel", "mul_owner_sentinel"} {
+		if strings.Contains(out, forbidden) {
+			t.Fatalf("task config output exposed owner sentinel %q:\n%s", forbidden, out)
+		}
+	}
+	if !strings.Contains(out, filepath.Join(taskRoot, "config.json")) || !strings.Contains(out, "https://task.invalid") {
+		t.Fatalf("task config output missing task-local state:\n%s", out)
+	}
+
+	after, err := os.ReadFile(ownerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerAfter, err := os.Stat(ownerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(ownerBytes) {
+		t.Fatalf("owner config content changed: got %q", after)
+	}
+	if !ownerAfter.ModTime().Equal(ownerBefore.ModTime()) {
+		t.Fatalf("owner config mtime changed: before %v after %v", ownerBefore.ModTime(), ownerAfter.ModTime())
+	}
+}
+
+func TestRunConfigCommandsFailClosedWithoutTaskRoot(t *testing.T) {
+	ownerHome := t.TempDir()
+	t.Setenv("HOME", ownerHome)
+	t.Setenv("MULTICA_AGENT_ID", "agent-test")
+	t.Setenv("MULTICA_TASK_ID", "task-test")
+	t.Setenv("MULTICA_TASK_CONFIG_ROOT", "")
+
+	ownerPath := filepath.Join(ownerHome, ".multica", "config.json")
+	if err := os.MkdirAll(filepath.Dir(ownerPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ownerBytes := []byte("{\n  \"server_url\": \"https://owner.invalid\",\n  \"token\": \"mul_owner_sentinel\"\n}\n")
+	if err := os.WriteFile(ownerPath, ownerBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newConfigTestCmd()
+	if _, err := captureStdout(t, func() error { return runConfigShow(cmd, nil) }); err == nil || !strings.Contains(err.Error(), "task-local") {
+		t.Fatalf("runConfigShow error = %v, want missing task-local config root", err)
+	}
+	if err := runConfigSet(cmd, []string{"server_url", "https://task.invalid"}); err == nil || !strings.Contains(err.Error(), "task-local") {
+		t.Fatalf("runConfigSet error = %v, want missing task-local config root", err)
+	}
+	after, err := os.ReadFile(ownerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(ownerBytes) {
+		t.Fatalf("owner config content changed: got %q", after)
+	}
+}
+
 func TestRunConfigSetRejectsUnknownKey(t *testing.T) {
 	testHome(t)
 
@@ -118,11 +205,12 @@ func TestApplyConfigSetSupportsDaemonKeys(t *testing.T) {
 	t.Parallel()
 
 	cfg := cli.CLIConfig{}
+	workspacesRoot := filepath.Join(t.TempDir(), "multica")
 	pairs := []struct{ key, val string }{
 		{"device_name", "vm-1-custom-name"},
-		{"workspaces_root", "/srv/multica/workspaces"},
 		{"codex_home", "/srv/multica/codex"},
 		{"runtime_name", "worker-a"},
+		{"workspaces_root", workspacesRoot},
 		{"max_concurrent_tasks", "4"},
 		{"poll_interval", "10s"},
 		{"heartbeat_interval", "5s"},
@@ -138,9 +226,9 @@ func TestApplyConfigSetSupportsDaemonKeys(t *testing.T) {
 		}
 	}
 	if cfg.DeviceName != "vm-1-custom-name" ||
-		cfg.WorkspacesRoot != "/srv/multica/workspaces" ||
 		cfg.CodexHome != "/srv/multica/codex" ||
 		cfg.RuntimeName != "worker-a" ||
+		cfg.WorkspacesRoot != workspacesRoot ||
 		cfg.MaxConcurrentTasks != 4 ||
 		cfg.PollInterval != "10s" ||
 		cfg.HeartbeatInterval != "5s" ||
@@ -185,6 +273,26 @@ func TestApplyConfigSetMigratesLegacyDaemonKeysToFlatFields(t *testing.T) {
 	}
 	if cfg.Daemon != nil {
 		t.Fatalf("legacy daemon block was not cleared: %+v", cfg.Daemon)
+	}
+}
+
+func TestApplyConfigSetNormalizesWorkspacesRoot(t *testing.T) {
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+
+	cfg := cli.CLIConfig{}
+	if err := applyConfigSet(&cfg, "workspaces_root", filepath.Join("data", "multica")); err != nil {
+		t.Fatalf("applyConfigSet: %v", err)
+	}
+	want := filepath.Join(cwd, "data", "multica")
+	if cfg.WorkspacesRoot != want {
+		t.Fatalf("WorkspacesRoot = %q, want absolute path %q", cfg.WorkspacesRoot, want)
+	}
+	if err := applyConfigSet(&cfg, "workspaces_root", ""); err != nil {
+		t.Fatalf("clear workspaces_root: %v", err)
+	}
+	if cfg.WorkspacesRoot != "" {
+		t.Fatalf("WorkspacesRoot = %q, want empty after clear", cfg.WorkspacesRoot)
 	}
 }
 
@@ -322,7 +430,7 @@ func TestApplyConfigSetPollIntervalZeroDoesNotOverwrite(t *testing.T) {
 }
 
 // TestApplyConfigSetEmptyStringClearsTypedKeys — parity with the existing
-// "set server_url ''" clearing behavior. For int and duration keys, ""
+// "set server_url ”" clearing behavior. For int and duration keys, ""
 // resets to the zero value rather than surfacing an Atoi/ParseDuration
 // error the user didn't ask for.
 func TestApplyConfigSetEmptyStringClearsTypedKeys(t *testing.T) {
