@@ -102,7 +102,7 @@ func TestRunConfigShowIncludesProfileAndDefaults(t *testing.T) {
 func TestRunConfigCommandsUseTaskLocalConfigWithoutTouchingOwner(t *testing.T) {
 	ownerHome := t.TempDir()
 	taskRoot := filepath.Join(t.TempDir(), "task-multica")
-	t.Setenv("HOME", ownerHome)
+	setTestHome(t, ownerHome)
 	t.Setenv("MULTICA_AGENT_ID", "agent-test")
 	t.Setenv("MULTICA_TASK_ID", "task-test")
 	t.Setenv("MULTICA_TASK_CONFIG_ROOT", taskRoot)
@@ -155,7 +155,7 @@ func TestRunConfigCommandsUseTaskLocalConfigWithoutTouchingOwner(t *testing.T) {
 
 func TestRunConfigCommandsFailClosedWithoutTaskRoot(t *testing.T) {
 	ownerHome := t.TempDir()
-	t.Setenv("HOME", ownerHome)
+	setTestHome(t, ownerHome)
 	t.Setenv("MULTICA_AGENT_ID", "agent-test")
 	t.Setenv("MULTICA_TASK_ID", "task-test")
 	t.Setenv("MULTICA_TASK_CONFIG_ROOT", "")

@@ -45,7 +45,7 @@ func captureStdout(t *testing.T, fn func() error) (string, error) {
 }
 
 func TestRunSkillImportJsonTreatsDuplicateAsConflictResult(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testHome(t)
 	t.Setenv("MULTICA_TOKEN", "test-token")
 	t.Setenv("MULTICA_WORKSPACE_ID", "workspace-123")
 
@@ -114,7 +114,7 @@ func TestRunSkillImportJsonTreatsDuplicateAsConflictResult(t *testing.T) {
 }
 
 func TestRunSkillImportSendsOnConflictAndPrintsStructuredResult(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testHome(t)
 	t.Setenv("MULTICA_TOKEN", "test-token")
 	t.Setenv("MULTICA_WORKSPACE_ID", "workspace-123")
 
@@ -462,7 +462,7 @@ func TestRunSkillInlineEmptyContentKeepsExistingBehavior(t *testing.T) {
 }
 
 func TestRunSkillRefreshPostsToRefreshEndpointAndPrintsTable(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testHome(t)
 	t.Setenv("MULTICA_TOKEN", "test-token")
 	t.Setenv("MULTICA_WORKSPACE_ID", "workspace-123")
 
@@ -507,7 +507,7 @@ func TestRunSkillRefreshPostsToRefreshEndpointAndPrintsTable(t *testing.T) {
 }
 
 func TestRunSkillRefreshJsonPrintsSkill(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testHome(t)
 	t.Setenv("MULTICA_TOKEN", "test-token")
 	t.Setenv("MULTICA_WORKSPACE_ID", "workspace-123")
 

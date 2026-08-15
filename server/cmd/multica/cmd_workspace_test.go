@@ -363,7 +363,7 @@ func TestRunWorkspaceSwitch(t *testing.T) {
 }
 
 func TestRunWorkspaceSwitchFailsClosedInTaskContext(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testHome(t)
 	t.Setenv("MULTICA_AGENT_ID", "agent-test")
 	t.Setenv("MULTICA_TASK_ID", "task-test")
 	t.Setenv("MULTICA_TOKEN", "mat_task_sentinel")
@@ -379,7 +379,7 @@ func TestRunWorkspaceSwitchFailsClosedInTaskContext(t *testing.T) {
 
 func TestFetchWorkspacesExplainsPortOnlyFailClosedContext(t *testing.T) {
 	t.Chdir(t.TempDir())
-	t.Setenv("HOME", t.TempDir())
+	testHome(t)
 	t.Setenv("MULTICA_AGENT_ID", "")
 	t.Setenv("MULTICA_TASK_ID", "")
 	t.Setenv(cli.TaskConfigRootEnv, "")

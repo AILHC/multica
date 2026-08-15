@@ -4,16 +4,22 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
+func setTestHome(t *testing.T, home string) {
+	t.Helper()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+}
+
 func testHome(t *testing.T) string {
 	t.Helper()
-	tmp := t.TempDir()
-	t.Setenv("HOME", tmp)
-	t.Setenv("USERPROFILE", tmp)
-	return tmp
+	home := t.TempDir()
+	setTestHome(t, home)
+	return home
 }
 
 // TestCLIConfig_BackwardCompat_OldFileLoadsWithNilBackends verifies that a
@@ -371,8 +377,7 @@ func TestCLIConfig_UnknownFieldsArePreserved(t *testing.T) {
 // drops one of these fields from the schema, this test fails at write
 // time instead of silently losing the operator's config on restart.
 func TestCLIConfig_DaemonKnobs_RoundTrip(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("HOME", tmp)
+	testHome(t)
 
 	zero := "0s"
 	original := CLIConfig{
@@ -406,7 +411,7 @@ func TestCLIConfig_DaemonKnobs_RoundTrip(t *testing.T) {
 func TestCLIConfig_TaskRootOverridesOwnerHome(t *testing.T) {
 	ownerHome := t.TempDir()
 	taskRoot := filepath.Join(t.TempDir(), "task-multica")
-	t.Setenv("HOME", ownerHome)
+	setTestHome(t, ownerHome)
 	t.Setenv("MULTICA_TASK_CONFIG_ROOT", taskRoot)
 
 	ownerPath := filepath.Join(ownerHome, ".multica", "config.json")
@@ -447,27 +452,29 @@ func TestCLIConfig_TaskRootOverridesOwnerHome(t *testing.T) {
 	if string(after) != string(ownerBytes) {
 		t.Fatalf("owner config was modified: got %q, want original sentinel", after)
 	}
-	for _, dir := range []string{taskRoot, filepath.Join(taskRoot, "profiles"), filepath.Join(taskRoot, "profiles", "dev")} {
-		info, err := os.Stat(dir)
+	if runtime.GOOS != "windows" {
+		for _, dir := range []string{taskRoot, filepath.Join(taskRoot, "profiles"), filepath.Join(taskRoot, "profiles", "dev")} {
+			info, err := os.Stat(dir)
+			if err != nil {
+				t.Fatalf("stat task config directory %q: %v", dir, err)
+			}
+			if got := info.Mode().Perm(); got != 0o700 {
+				t.Errorf("task config directory %q mode = %#o, want 0700", dir, got)
+			}
+		}
+		info, err := os.Stat(wantPath)
 		if err != nil {
-			t.Fatalf("stat task config directory %q: %v", dir, err)
+			t.Fatalf("stat task config file: %v", err)
 		}
-		if got := info.Mode().Perm(); got != 0o700 {
-			t.Errorf("task config directory %q mode = %#o, want 0700", dir, got)
+		if got := info.Mode().Perm(); got != 0o600 {
+			t.Errorf("task config file mode = %#o, want 0600", got)
 		}
-	}
-	info, err := os.Stat(wantPath)
-	if err != nil {
-		t.Fatalf("stat task config file: %v", err)
-	}
-	if got := info.Mode().Perm(); got != 0o600 {
-		t.Errorf("task config file mode = %#o, want 0600", got)
 	}
 }
 
 func TestCLIConfig_NoTaskRootKeepsInteractiveHomeResolution(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("MULTICA_TASK_CONFIG_ROOT", "")
 
 	path, err := CLIConfigPathForProfile("dev")

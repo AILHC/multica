@@ -275,9 +275,13 @@ func TestPrepareLocalWorktreeSubdirectory(t *testing.T) {
 // than silently running in-place, which would leave them wondering why their
 // tasks still queue one at a time.
 func TestPrepareLocalWorktreeRejectsNonGitDirectory(t *testing.T) {
+	localPath := t.TempDir()
+	envRoot := t.TempDir()
+	t.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(localPath))
+
 	_, err := PrepareLocalWorktree(LocalWorktreeParams{
-		LocalPath: t.TempDir(),
-		EnvRoot:   t.TempDir(),
+		LocalPath: localPath,
+		EnvRoot:   envRoot,
 		TaskID:    "task-1",
 	}, worktreeTestLogger())
 	if err == nil {
@@ -458,14 +462,14 @@ func TestPrepareLocalWorktreePrunesStaleRegistrations(t *testing.T) {
 	if err := os.RemoveAll(orphan.Path); err != nil {
 		t.Fatalf("remove orphan worktree dir: %v", err)
 	}
-	if list := gitRun(t, repo, "worktree", "list"); !strings.Contains(list, orphan.Path) {
+	if list := gitRun(t, repo, "worktree", "list"); !strings.Contains(filepath.ToSlash(list), filepath.ToSlash(orphan.Path)) {
 		t.Fatalf("precondition failed: orphan not registered:\n%s", list)
 	}
 
 	wt := prepareForTest(t, repo)
 	t.Cleanup(func() { finalizeOK(t, wt) })
 
-	if list := gitRun(t, repo, "worktree", "list"); strings.Contains(list, orphan.Path) {
+	if list := gitRun(t, repo, "worktree", "list"); strings.Contains(filepath.ToSlash(list), filepath.ToSlash(orphan.Path)) {
 		t.Errorf("stale registration not pruned:\n%s", list)
 	}
 }
@@ -510,7 +514,7 @@ func TestFinalizeKeepsWorktreeWhenCommitFails(t *testing.T) {
 		t.Errorf("agent work was destroyed despite the commit failure, got %q", got)
 	}
 	// And it stays discoverable through git rather than only a log line.
-	if list := gitRun(t, repo, "worktree", "list"); !strings.Contains(list, wt.Path) {
+	if list := gitRun(t, repo, "worktree", "list"); !strings.Contains(filepath.ToSlash(list), filepath.ToSlash(wt.Path)) {
 		t.Errorf("preserved worktree is no longer registered, so the user cannot find it:\n%s", list)
 	}
 	if !strings.Contains(err.Error(), wt.Path) {
@@ -681,7 +685,7 @@ func TestFinalizeAbortRefusesToCommitAndKeepsWorktree(t *testing.T) {
 	if got := readFile(t, filepath.Join(wt.Path, "agent-output.txt")); got != "real work\n" {
 		t.Errorf("agent work was destroyed: %q", got)
 	}
-	if list := gitRun(t, repo, "worktree", "list"); !strings.Contains(list, wt.Path) {
+	if list := gitRun(t, repo, "worktree", "list"); !strings.Contains(filepath.ToSlash(list), filepath.ToSlash(wt.Path)) {
 		t.Errorf("preserved worktree is no longer registered:\n%s", list)
 	}
 }

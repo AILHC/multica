@@ -333,7 +333,7 @@ func TestLoginTokenFlagParsing(t *testing.T) {
 
 func TestRunAuthStatusTaskContextDoesNotPrintCredential(t *testing.T) {
 	const fakeTaskToken = "mat_task_status_sentinel"
-	t.Setenv("HOME", t.TempDir())
+	testHome(t)
 	t.Setenv("MULTICA_AGENT_ID", "agent-test")
 	t.Setenv("MULTICA_TASK_ID", "task-test")
 	t.Setenv("MULTICA_TOKEN", fakeTaskToken)
@@ -372,7 +372,7 @@ func TestRunAuthStatusTaskContextDoesNotPrintCredential(t *testing.T) {
 
 func TestRunAuthStatusTaskContextRequiresTaskToken(t *testing.T) {
 	ownerHome := t.TempDir()
-	t.Setenv("HOME", ownerHome)
+	setTestHome(t, ownerHome)
 	t.Setenv("MULTICA_AGENT_ID", "agent-test")
 	t.Setenv("MULTICA_TASK_ID", "task-test")
 	t.Setenv("MULTICA_TASK_CONFIG_ROOT", filepath.Join(t.TempDir(), "task-multica"))
@@ -433,7 +433,7 @@ func TestRunAuthStatusTaskContextRequiresTaskToken(t *testing.T) {
 
 func TestHumanAuthCommandsFailClosedInTaskContext(t *testing.T) {
 	ownerHome := t.TempDir()
-	t.Setenv("HOME", ownerHome)
+	setTestHome(t, ownerHome)
 	t.Setenv("MULTICA_AGENT_ID", "agent-test")
 	t.Setenv("MULTICA_TASK_ID", "task-test")
 	t.Setenv("MULTICA_TOKEN", "mat_task_sentinel")
