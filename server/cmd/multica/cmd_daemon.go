@@ -1617,14 +1617,6 @@ func flagString(cmd *cobra.Command, name string) string {
 	return val
 }
 
-func profileDaemonWorkspacesRoot(profile string) string {
-	cfg, err := cli.LoadCLIConfigForProfile(profile)
-	if err != nil {
-		return ""
-	}
-	return effectiveWorkspacesRoot(cfg)
-}
-
 // envUnset reports whether the given env var is empty or missing entirely.
 // The three-tier precedence for daemon knobs (flag > env > config.json)
 // hinges on this check: config-file substitution only fires when both the
