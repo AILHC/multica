@@ -206,9 +206,10 @@ func TestApplyConfigSetSupportsDaemonKeys(t *testing.T) {
 
 	cfg := cli.CLIConfig{}
 	workspacesRoot := filepath.Join(t.TempDir(), "multica")
+	codexHome := filepath.Join(t.TempDir(), "codex")
 	pairs := []struct{ key, val string }{
 		{"device_name", "vm-1-custom-name"},
-		{"codex_home", "/srv/multica/codex"},
+		{"codex_home", codexHome},
 		{"runtime_name", "worker-a"},
 		{"workspaces_root", workspacesRoot},
 		{"max_concurrent_tasks", "4"},
@@ -226,7 +227,7 @@ func TestApplyConfigSetSupportsDaemonKeys(t *testing.T) {
 		}
 	}
 	if cfg.DeviceName != "vm-1-custom-name" ||
-		cfg.CodexHome != "/srv/multica/codex" ||
+		cfg.CodexHome != codexHome ||
 		cfg.RuntimeName != "worker-a" ||
 		cfg.WorkspacesRoot != workspacesRoot ||
 		cfg.MaxConcurrentTasks != 4 ||
@@ -238,6 +239,25 @@ func TestApplyConfigSetSupportsDaemonKeys(t *testing.T) {
 		cfg.AutoUpdateCheckInterval != "12h" ||
 		cfg.DisableAutoReload != true {
 		t.Fatalf("cfg after set = %+v", cfg)
+	}
+}
+
+func TestEffectiveCodexHomeIgnoresWhitespaceValues(t *testing.T) {
+	t.Parallel()
+
+	legacyHome := filepath.Join(t.TempDir(), "legacy-codex")
+	if got := effectiveCodexHome(cli.CLIConfig{
+		CodexHome: " \t ",
+		Daemon:    &cli.DaemonConfig{CodexHome: "  " + legacyHome + "  "},
+	}); got != legacyHome {
+		t.Fatalf("effectiveCodexHome() = %q, want trimmed legacy value %q", got, legacyHome)
+	}
+
+	if got := effectiveCodexHome(cli.CLIConfig{
+		CodexHome: " \t ",
+		Daemon:    &cli.DaemonConfig{CodexHome: " \r\n "},
+	}); got != "" {
+		t.Fatalf("effectiveCodexHome() = %q, want empty for whitespace-only values", got)
 	}
 }
 

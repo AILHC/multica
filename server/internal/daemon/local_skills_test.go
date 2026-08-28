@@ -606,6 +606,33 @@ func TestRuntimeLocalSkills_CodexUsesResolvedSharedHomeOverProcessEnv(t *testing
 	}
 }
 
+func TestRuntimeLocalSkills_CodexExplicitHomeDoesNotRequireUserHome(t *testing.T) {
+	profileCodexHome := t.TempDir()
+	writeTestLocalSkill(t, filepath.Join(profileCodexHome, "skills"), "debugger", map[string]string{
+		"SKILL.md": "---\nname: Profile Debugger\n---\n# Debugger\n",
+	})
+	for _, name := range []string{"HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH"} {
+		t.Setenv(name, "")
+	}
+	t.Setenv("CODEX_HOME", "")
+
+	skills, supported, err := listRuntimeLocalSkills("codex", profileCodexHome)
+	if err != nil || !supported {
+		t.Fatalf("listRuntimeLocalSkills: supported=%v err=%v", supported, err)
+	}
+	if len(skills) != 1 || skills[0].Key != "debugger" {
+		t.Fatalf("skills = %#v, want explicit-home skill", skills)
+	}
+
+	bundle, supported, err := loadRuntimeLocalSkillBundle("codex", "debugger", profileCodexHome)
+	if err != nil || !supported {
+		t.Fatalf("loadRuntimeLocalSkillBundle: supported=%v err=%v", supported, err)
+	}
+	if bundle.Name != "Profile Debugger" {
+		t.Fatalf("bundle = %#v, want explicit-home skill", bundle)
+	}
+}
+
 // opencode (and possibly future providers) lay skills out one level deep,
 // e.g. ~/.config/opencode/skills/release/reporter/SKILL.md.
 // loadRuntimeLocalSkillBundle already accepts that nested key, so the list

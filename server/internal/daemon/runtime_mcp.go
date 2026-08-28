@@ -244,9 +244,13 @@ func stripJSONC(raw []byte) ([]byte, error) {
 // logs; the public capabilities endpoint continues to use the redacted summary
 // type above.
 func loadRuntimeMcpServerConfigs(provider, sharedCodexHome string) (map[string]any, bool, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, false, fmt.Errorf("resolve user home: %w", err)
+	var home string
+	if provider != "codex" {
+		var err error
+		home, err = os.UserHomeDir()
+		if err != nil {
+			return nil, false, fmt.Errorf("resolve user home: %w", err)
+		}
 	}
 
 	var path, key, format string
@@ -260,12 +264,9 @@ func loadRuntimeMcpServerConfigs(provider, sharedCodexHome string) (map[string]a
 	// CLI does natively — while losing the scope precedence and the approval
 	// gate that protects project-scope servers.
 	case "codex":
-		codexHome := strings.TrimSpace(sharedCodexHome)
-		if codexHome == "" {
-			codexHome = strings.TrimSpace(os.Getenv("CODEX_HOME"))
-		}
-		if codexHome == "" {
-			codexHome = filepath.Join(home, ".codex")
+		codexHome, err := resolveRuntimeCodexHome(sharedCodexHome)
+		if err != nil {
+			return nil, false, err
 		}
 		path, key, format = filepath.Join(codexHome, "config.toml"), "mcp_servers", "toml"
 	case "cursor":
@@ -316,6 +317,20 @@ func loadRuntimeMcpServerConfigs(provider, sharedCodexHome string) (map[string]a
 		}
 	}
 	return servers, true, nil
+}
+
+func resolveRuntimeCodexHome(sharedCodexHome string) (string, error) {
+	if codexHome := strings.TrimSpace(sharedCodexHome); codexHome != "" {
+		return codexHome, nil
+	}
+	if codexHome := strings.TrimSpace(os.Getenv("CODEX_HOME")); codexHome != "" {
+		return codexHome, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve user home: %w", err)
+	}
+	return filepath.Join(home, ".codex"), nil
 }
 
 func normalizeRuntimeMcpEntry(provider string, value any) any {
@@ -372,9 +387,13 @@ func loadClaudePluginMcpServerConfigs(home string) map[string]any {
 }
 
 func listRuntimeLocalMcpServers(provider, sharedCodexHome string) ([]runtimeLocalMcpServerSummary, bool, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, false, fmt.Errorf("resolve user home: %w", err)
+	var home string
+	if provider != "codex" {
+		var err error
+		home, err = os.UserHomeDir()
+		if err != nil {
+			return nil, false, fmt.Errorf("resolve user home: %w", err)
+		}
 	}
 
 	var path, key, source string
@@ -395,12 +414,9 @@ func listRuntimeLocalMcpServers(provider, sharedCodexHome string) ([]runtimeLoca
 		}
 		path, key, source, format = filepath.Join(kimiHome, "mcp.json"), "mcpServers", "User config", "json"
 	case "codex":
-		codexHome := strings.TrimSpace(sharedCodexHome)
-		if codexHome == "" {
-			codexHome = strings.TrimSpace(os.Getenv("CODEX_HOME"))
-		}
-		if codexHome == "" {
-			codexHome = filepath.Join(home, ".codex")
+		codexHome, err := resolveRuntimeCodexHome(sharedCodexHome)
+		if err != nil {
+			return nil, false, err
 		}
 		path, key, source, format = filepath.Join(codexHome, "config.toml"), "mcp_servers", "User config", "toml"
 	case "cursor":

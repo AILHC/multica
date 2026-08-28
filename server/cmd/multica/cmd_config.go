@@ -286,11 +286,11 @@ func effectiveWorkspacesRoot(cfg cli.CLIConfig) string {
 }
 
 func effectiveCodexHome(cfg cli.CLIConfig) string {
-	if cfg.CodexHome != "" {
-		return cfg.CodexHome
+	if value := strings.TrimSpace(cfg.CodexHome); value != "" {
+		return value
 	}
 	if cfg.Daemon != nil {
-		return cfg.Daemon.CodexHome
+		return strings.TrimSpace(cfg.Daemon.CodexHome)
 	}
 	return ""
 }

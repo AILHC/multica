@@ -439,7 +439,7 @@ func sanitizePathSegment(s string) string {
 	return b.String()
 }
 
-// PruneCodexSessionStores reclaims per-issue Codex session stores under the
+// PruneCodexSessionStoresAt reclaims per-issue Codex session stores under the
 // shared home's multica-sessions root that have not been touched within
 // retention, bounding the lifetime of the conversation history each one holds.
 //
@@ -466,12 +466,6 @@ func sanitizePathSegment(s string) string {
 // the remove are effectively atomic, closing the stat->remove race a plain
 // point-in-time active check leaves open. nil disables the guard (tests): every
 // idle store is removed.
-func PruneCodexSessionStores(profile string, retention time.Duration, now time.Time, reserve func(storeDir string) (commit func(), ok bool), logger *slog.Logger) (removed int, bytesFreed int64) {
-	return PruneCodexSessionStoresAt("", profile, retention, now, reserve, logger)
-}
-
-// PruneCodexSessionStoresAt is the explicit-shared-home variant used by the
-// daemon when a profile config overrides CODEX_HOME.
 func PruneCodexSessionStoresAt(sharedCodexHome, profile string, retention time.Duration, now time.Time, reserve func(storeDir string) (commit func(), ok bool), logger *slog.Logger) (removed int, bytesFreed int64) {
 	if retention <= 0 {
 		return 0, 0
@@ -692,17 +686,11 @@ func touchCodexSessionStore(storeDir string, logger *slog.Logger) {
 	}
 }
 
-// CodexSessionStorePath returns the per-conversation Codex session store on the
-// shared home, or "" when there is no stable issue or chat key. The daemon
-// marks this path in-use for the duration of a task so
-// PruneCodexSessionStores never reclaims a store mid-mount, closing the
-// stat→remove race the mtime refresh alone cannot (MUL-4424).
-func CodexSessionStorePath(profile string, task TaskContextForEnv) string {
-	return CodexSessionStorePathAt("", profile, task)
-}
-
-// CodexSessionStorePathAt returns the store path under an explicit shared
-// Codex home.
+// CodexSessionStorePathAt returns the per-conversation Codex session store
+// under the selected shared home, or "" when there is no stable issue or chat
+// key. The daemon marks this path in-use for the duration of a task so pruning
+// never reclaims a store mid-mount, closing the stat→remove race the mtime
+// refresh alone cannot (MUL-4424).
 func CodexSessionStorePathAt(sharedCodexHome, profile string, task TaskContextForEnv) string {
 	key := codexSessionStoreKey(profile, task)
 	if key == "" {
@@ -1284,7 +1272,9 @@ func exposeSharedCodexPluginCache(codexHome, sharedHome string) error {
 	return nil
 }
 
-// ensureSymlink ensures dst tracks src. If src doesn't exist, it's a no-op.
+// ensureSymlink ensures dst tracks src. If src doesn't exist, any stale file or
+// file link at dst is removed so a reused task home cannot retain credentials
+// from a previously selected shared home.
 // If dst is already a symlink pointing at src, it's a no-op. Otherwise — a
 // wrong-target symlink, a broken symlink, or a regular file left over from a
 // prior createFileLink copy fallback — dst is removed and recreated via
@@ -1296,8 +1286,24 @@ func exposeSharedCodexPluginCache(codexHome, sharedHome string) error {
 // pick up token refreshes from the shared ~/.codex/auth.json, leaving Codex
 // stuck on a revoked refresh token across env reuses (issue #2081).
 func ensureSymlink(src, dst string) error {
-	if _, err := os.Stat(src); os.IsNotExist(err) {
-		return nil // source doesn't exist — skip
+	if _, err := os.Stat(src); err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("stat symlink source %s: %w", src, err)
+		}
+		fi, dstErr := os.Lstat(dst)
+		switch {
+		case os.IsNotExist(dstErr):
+			return nil
+		case dstErr != nil:
+			return fmt.Errorf("stat stale dst %s: %w", dst, dstErr)
+		case fi.IsDir() && fi.Mode()&os.ModeSymlink == 0:
+			return fmt.Errorf("stale dst %s is a directory", dst)
+		default:
+			if err := os.Remove(dst); err != nil {
+				return fmt.Errorf("remove stale dst %s: %w", dst, err)
+			}
+			return nil
+		}
 	}
 
 	if fi, err := os.Lstat(dst); err == nil {

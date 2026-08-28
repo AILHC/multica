@@ -224,6 +224,39 @@ func TestCodexRuntimeMcpUsesResolvedSharedHome(t *testing.T) {
 	}
 }
 
+func TestCodexRuntimeMcpExplicitHomeDoesNotRequireUserHome(t *testing.T) {
+	configDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(configDir, "config.toml"), []byte("[mcp_servers.profile-server]\ncommand = \"node\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH"} {
+		t.Setenv(name, "")
+	}
+	t.Setenv("CODEX_HOME", "")
+
+	servers, supported, err := listRuntimeLocalMcpServers("codex", configDir)
+	if err != nil || !supported {
+		t.Fatalf("listRuntimeLocalMcpServers: supported=%v err=%v", supported, err)
+	}
+	if len(servers) != 1 || servers[0].Name != "profile-server" {
+		t.Fatalf("listed servers = %#v, want explicit-home server", servers)
+	}
+
+	merged, err := mergeRuntimeAndAgentMcpConfig("codex", configDir, json.RawMessage(`{"mcpServers":{}}`))
+	if err != nil {
+		t.Fatalf("mergeRuntimeAndAgentMcpConfig: %v", err)
+	}
+	var document struct {
+		McpServers map[string]map[string]any `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(merged, &document); err != nil {
+		t.Fatal(err)
+	}
+	if document.McpServers["profile-server"] == nil {
+		t.Fatalf("merged servers = %#v, want explicit-home server", document.McpServers)
+	}
+}
+
 func TestMergeRuntimeAndAgentMcpConfigNullKeepsNativeInheritance(t *testing.T) {
 	testHome(t)
 	for _, raw := range []json.RawMessage{nil, json.RawMessage("null"), json.RawMessage(" null ")} {

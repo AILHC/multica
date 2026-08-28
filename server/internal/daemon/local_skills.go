@@ -123,9 +123,17 @@ const (
 // definitions under server/pkg/agent so adding a new runtime can't silently
 // miss the local-skills surface.
 func localSkillRootsForProvider(provider, sharedCodexHome string) ([]localSkillRoot, bool, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, false, fmt.Errorf("resolve user home: %w", err)
+	var codexHome string
+	if provider == "codex" {
+		var err error
+		codexHome, err = resolveRuntimeCodexHome(sharedCodexHome)
+		if err != nil {
+			return nil, false, err
+		}
+	}
+	home, homeErr := os.UserHomeDir()
+	if homeErr != nil && provider != "codex" {
+		return nil, false, fmt.Errorf("resolve user home: %w", homeErr)
 	}
 
 	var providerRoot string
@@ -133,7 +141,7 @@ func localSkillRootsForProvider(provider, sharedCodexHome string) ([]localSkillR
 	// in the descriptor; resolve to providerRoot and fall through to the
 	// common construction below so universal roots, merging, and fallback
 	// import all still apply — same as every protocol-family provider.
-	if desc, ok := agent.BuiltinRuntimeByID(provider); ok {
+	if desc, ok := agent.BuiltinRuntimeByID(provider); ok && provider != "codex" {
 		providerRoot = filepath.Join(home, desc.UserSkillsDir)
 	} else {
 		switch provider {
@@ -150,15 +158,6 @@ func localSkillRootsForProvider(provider, sharedCodexHome string) ([]localSkillR
 			// ~/.codebuddy/skills/").
 			providerRoot = filepath.Join(home, ".codebuddy", "skills")
 		case "codex":
-			// Prefer the daemon-resolved explicit home, then the process
-			// environment, and finally the standard ~/.codex location.
-			codexHome := strings.TrimSpace(sharedCodexHome)
-			if codexHome == "" {
-				codexHome = strings.TrimSpace(os.Getenv("CODEX_HOME"))
-			}
-			if codexHome == "" {
-				codexHome = filepath.Join(home, ".codex")
-			}
 			providerRoot = filepath.Join(codexHome, "skills")
 		case "copilot":
 			providerRoot = filepath.Join(home, ".copilot", "skills")
@@ -251,7 +250,9 @@ func localSkillRootsForProvider(provider, sharedCodexHome string) ([]localSkillR
 
 	roots := []localSkillRoot{
 		{path: providerRoot, kind: localSkillRootProvider},
-		{path: filepath.Join(home, ".agents", "skills"), kind: localSkillRootUniversal},
+	}
+	if homeErr == nil {
+		roots = append(roots, localSkillRoot{path: filepath.Join(home, ".agents", "skills"), kind: localSkillRootUniversal})
 	}
 	if provider == "claude" {
 		for _, plugin := range listEnabledClaudePlugins(home) {

@@ -122,15 +122,17 @@ func TestBuildDaemonStartArgsForwardsCustomPathFlags(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.Flags().String("workspaces-root", "", "")
 	cmd.Flags().String("codex-home", "", "")
-	if err := cmd.Flags().Set("workspaces-root", "/Volumes/Agent Workspaces"); err != nil {
+	workspacesRoot := filepath.Join(t.TempDir(), "Agent Workspaces")
+	codexHome := filepath.Join(t.TempDir(), "Codex Home")
+	if err := cmd.Flags().Set("workspaces-root", workspacesRoot); err != nil {
 		t.Fatalf("set workspaces-root: %v", err)
 	}
-	if err := cmd.Flags().Set("codex-home", "/Volumes/Codex Home"); err != nil {
+	if err := cmd.Flags().Set("codex-home", codexHome); err != nil {
 		t.Fatalf("set codex-home: %v", err)
 	}
 
 	args := strings.Join(buildDaemonStartArgs(cmd), "\x00")
-	for _, want := range []string{"--workspaces-root", "/Volumes/Agent Workspaces", "--codex-home", "/Volumes/Codex Home"} {
+	for _, want := range []string{"--workspaces-root", workspacesRoot, "--codex-home", codexHome} {
 		if !strings.Contains(args, want) {
 			t.Fatalf("args = %q, want %q", args, want)
 		}

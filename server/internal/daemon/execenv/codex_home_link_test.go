@@ -22,6 +22,48 @@ func TestEnsureSymlink_SkipsWhenSourceMissing(t *testing.T) {
 	}
 }
 
+func TestEnsureSymlink_RemovesStaleDestinationWhenSourceMissing(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	src := filepath.Join(dir, "missing.json")
+	dst := filepath.Join(dir, "stale.json")
+	if err := os.WriteFile(dst, []byte("stale credentials"), 0o600); err != nil {
+		t.Fatalf("seed stale destination: %v", err)
+	}
+
+	if err := ensureSymlink(src, dst); err != nil {
+		t.Fatalf("ensureSymlink: %v", err)
+	}
+	if _, err := os.Lstat(dst); !os.IsNotExist(err) {
+		t.Fatalf("stale destination still exists after source removal: %v", err)
+	}
+}
+
+func TestPrepareCodexHome_RemovesAuthFromPreviouslySelectedSharedHome(t *testing.T) {
+	t.Parallel()
+	oldSharedHome := t.TempDir()
+	newSharedHome := t.TempDir()
+	taskHome := filepath.Join(t.TempDir(), "codex-home")
+
+	if err := os.WriteFile(filepath.Join(oldSharedHome, "auth.json"), []byte("old profile credentials"), 0o600); err != nil {
+		t.Fatalf("seed old shared auth: %v", err)
+	}
+	if err := prepareCodexHomeWithOpts(taskHome, CodexHomeOptions{SharedCodexHome: oldSharedHome}, testLogger()); err != nil {
+		t.Fatalf("prepare with old shared home: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(taskHome, "auth.json")); err != nil {
+		t.Fatalf("task auth missing after initial prepare: %v", err)
+	}
+
+	if err := prepareCodexHomeWithOpts(taskHome, CodexHomeOptions{SharedCodexHome: newSharedHome}, testLogger()); err != nil {
+		t.Fatalf("reuse with new shared home: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(taskHome, "auth.json")); !os.IsNotExist(err) {
+		t.Fatalf("old shared auth remains after profile switch: %v", err)
+	}
+}
+
 func TestEnsureSymlink_ReplacesStaleRegularFile(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
