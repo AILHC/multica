@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -10,12 +11,31 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/spf13/cobra"
 )
 
 func TestMain(m *testing.M) {
+	home, err := os.MkdirTemp("", "multica-cmd-tests-")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "create package test home: %v\n", err)
+		os.Exit(1)
+	}
+	for key, value := range map[string]string{
+		"HOME":        home,
+		"USERPROFILE": home,
+		"HOMEDRIVE":   filepath.VolumeName(home),
+		"HOMEPATH":    strings.TrimPrefix(home, filepath.VolumeName(home)),
+	} {
+		if err := os.Setenv(key, value); err != nil {
+			fmt.Fprintf(os.Stderr, "set package test home %s: %v\n", key, err)
+			os.Exit(1)
+		}
+	}
 	for _, key := range []string{
 		"MULTICA_AGENT_ID",
+		"MULTICA_APP_URL",
+		"MULTICA_PROFILE",
 		"MULTICA_TASK_ID",
 		"MULTICA_TOKEN",
 		"MULTICA_DAEMON_PORT",
@@ -25,7 +45,32 @@ func TestMain(m *testing.M) {
 	} {
 		os.Unsetenv(key)
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	if err := os.RemoveAll(home); err != nil {
+		fmt.Fprintf(os.Stderr, "remove package test home: %v\n", err)
+		if code == 0 {
+			code = 1
+		}
+	}
+	os.Exit(code)
+}
+
+func TestPackageTestHomeIsIsolated(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath, err := cli.CLIConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	relative, err := filepath.Rel(home, configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		t.Fatalf("CLI config path escaped package test home: %s", configPath)
+	}
 }
 
 // testCmd returns a minimal cobra.Command with the --profile persistent flag

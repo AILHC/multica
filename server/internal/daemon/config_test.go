@@ -22,6 +22,8 @@ func setTestHome(t *testing.T, home string) {
 	t.Helper()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("HOMEDRIVE", filepath.VolumeName(home))
+	t.Setenv("HOMEPATH", strings.TrimPrefix(home, filepath.VolumeName(home)))
 }
 
 func testHome(t *testing.T) string {
@@ -129,14 +131,14 @@ func TestDefaultGCIntervalIsTwoHours(t *testing.T) {
 // self-host branch of defaultGCCompletedTaskTTL: retention stays unbounded until
 // an operator opts in, and a daemon upgrade never starts deleting on its own.
 func TestLoadConfig_CompletedTaskTTLDefaultsDisabledOnSelfHostAndReadsEnv(t *testing.T) {
-	stageFakeAgent(t)
-	t.Setenv("HOME", t.TempDir())
+	testHome(t)
 	t.Setenv("SHELL", filepath.Join(t.TempDir(), "missing-shell"))
 	t.Setenv("MULTICA_GC_COMPLETED_TASK_TTL", "")
 
 	overrides := Overrides{
 		ServerURL:      "http://localhost:0",
 		WorkspacesRoot: t.TempDir(),
+		AllowNoAgents:  true,
 	}
 	cfg, err := LoadConfig(overrides)
 	if err != nil {
@@ -162,14 +164,14 @@ func TestLoadConfig_CompletedTaskTTLDefaultsDisabledOnSelfHostAndReadsEnv(t *tes
 }
 
 func TestLoadConfig_CompletedTaskTTLDefaultsBoundedOnOfficialCloud(t *testing.T) {
-	stageFakeAgent(t)
-	t.Setenv("HOME", t.TempDir())
+	testHome(t)
 	t.Setenv("SHELL", filepath.Join(t.TempDir(), "missing-shell"))
 	t.Setenv("MULTICA_GC_COMPLETED_TASK_TTL", "")
 
 	overrides := Overrides{
 		ServerURL:      "https://" + officialCloudHost,
 		WorkspacesRoot: t.TempDir(),
+		AllowNoAgents:  true,
 	}
 	cfg, err := LoadConfig(overrides)
 	if err != nil {
@@ -1557,7 +1559,6 @@ func TestLoadConfig_BackendOverrides_MalformedConfigFileNonFatal(t *testing.T) {
 }
 
 func TestLoadConfig_DaemonProfileConfigProvidesDefaults(t *testing.T) {
-	stageFakeAgent(t)
 	home := testHome(t)
 	t.Setenv("MULTICA_DAEMON_DEVICE_NAME", "")
 	t.Setenv("MULTICA_WORKSPACES_ROOT", "")
@@ -1575,7 +1576,10 @@ func TestLoadConfig_DaemonProfileConfigProvidesDefaults(t *testing.T) {
 		t.Fatalf("save cli config: %v", err)
 	}
 
-	loaded, err := LoadConfig(Overrides{ServerURL: "http://localhost:8080"})
+	loaded, err := LoadConfig(Overrides{
+		ServerURL:     "http://localhost:8080",
+		AllowNoAgents: true,
+	})
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
@@ -1591,7 +1595,6 @@ func TestLoadConfig_DaemonProfileConfigProvidesDefaults(t *testing.T) {
 }
 
 func TestLoadConfig_FlatDaemonPathConfigOverridesLegacy(t *testing.T) {
-	stageFakeAgent(t)
 	home := testHome(t)
 	t.Setenv("MULTICA_DAEMON_DEVICE_NAME", "")
 	t.Setenv("MULTICA_WORKSPACES_ROOT", "")
@@ -1612,7 +1615,10 @@ func TestLoadConfig_FlatDaemonPathConfigOverridesLegacy(t *testing.T) {
 		t.Fatalf("save cli config: %v", err)
 	}
 
-	loaded, err := LoadConfig(Overrides{ServerURL: "http://localhost:8080"})
+	loaded, err := LoadConfig(Overrides{
+		ServerURL:     "http://localhost:8080",
+		AllowNoAgents: true,
+	})
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
@@ -1628,7 +1634,6 @@ func TestLoadConfig_FlatDaemonPathConfigOverridesLegacy(t *testing.T) {
 }
 
 func TestLoadConfig_DaemonProfileConfigPrecedence(t *testing.T) {
-	stageFakeAgent(t)
 	home := testHome(t)
 	t.Setenv("MULTICA_DAEMON_DEVICE_NAME", "env-device")
 	t.Setenv("MULTICA_WORKSPACES_ROOT", filepath.Join(home, "env-workspaces"))
@@ -1651,6 +1656,7 @@ func TestLoadConfig_DaemonProfileConfigPrecedence(t *testing.T) {
 		DeviceName:      "flag-device",
 		WorkspacesRoot:  filepath.Join(home, "flag-workspaces"),
 		SharedCodexHome: filepath.Join(home, "flag-codex"),
+		AllowNoAgents:   true,
 	})
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
