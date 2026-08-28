@@ -95,13 +95,14 @@ func runConfigShow(cmd *cobra.Command, _ []string) error {
 	if profile != "" {
 		fmt.Fprintf(os.Stdout, "Profile:      %s\n", profile)
 	}
+	effectiveDaemon := cfg.EffectiveDaemonConfig()
 	fmt.Fprintf(os.Stdout, "%-34s %s\n", "server_url:", valueOrDefault(cfg.ServerURL, "(not set)"))
 	fmt.Fprintf(os.Stdout, "%-34s %s\n", "app_url:", valueOrDefault(cfg.AppURL, "(not set)"))
 	fmt.Fprintf(os.Stdout, "%-34s %s\n", "workspace_id:", valueOrDefault(cfg.WorkspaceID, "(not set)"))
-	fmt.Fprintf(os.Stdout, "%-34s %s\n", "device_name:", valueOrDefault(effectiveDeviceName(cfg), "(not set)"))
+	fmt.Fprintf(os.Stdout, "%-34s %s\n", "device_name:", valueOrDefault(effectiveDaemon.DeviceName, "(not set)"))
 	fmt.Fprintf(os.Stdout, "%-34s %s\n", "runtime_name:", valueOrDefault(cfg.RuntimeName, "(not set)"))
-	fmt.Fprintf(os.Stdout, "%-34s %s\n", "workspaces_root:", valueOrDefault(effectiveWorkspacesRoot(cfg), "(not set)"))
-	fmt.Fprintf(os.Stdout, "%-34s %s\n", "codex_home:", valueOrDefault(effectiveCodexHome(cfg), "(not set)"))
+	fmt.Fprintf(os.Stdout, "%-34s %s\n", "workspaces_root:", valueOrDefault(effectiveDaemon.WorkspacesRoot, "(not set)"))
+	fmt.Fprintf(os.Stdout, "%-34s %s\n", "codex_home:", valueOrDefault(effectiveDaemon.CodexHome, "(not set)"))
 	fmt.Fprintf(os.Stdout, "%-34s %s\n", "max_concurrent_tasks:", intOrDefault(cfg.MaxConcurrentTasks, "(not set)"))
 	fmt.Fprintf(os.Stdout, "%-34s %s\n", "poll_interval:", valueOrDefault(cfg.PollInterval, "(not set)"))
 	fmt.Fprintf(os.Stdout, "%-34s %s\n", "heartbeat_interval:", valueOrDefault(cfg.HeartbeatInterval, "(not set)"))
@@ -263,36 +264,6 @@ func applyConfigSet(cfg *cli.CLIConfig, key, value string) error {
 		return fmt.Errorf("unknown config key %q (supported: %s)", key, joinKeys(configSetSupportedKeys))
 	}
 	return nil
-}
-
-func effectiveDeviceName(cfg cli.CLIConfig) string {
-	if cfg.DeviceName != "" {
-		return cfg.DeviceName
-	}
-	if cfg.Daemon != nil {
-		return cfg.Daemon.DeviceName
-	}
-	return ""
-}
-
-func effectiveWorkspacesRoot(cfg cli.CLIConfig) string {
-	if cfg.WorkspacesRoot != "" {
-		return cfg.WorkspacesRoot
-	}
-	if cfg.Daemon != nil {
-		return cfg.Daemon.WorkspacesRoot
-	}
-	return ""
-}
-
-func effectiveCodexHome(cfg cli.CLIConfig) string {
-	if value := strings.TrimSpace(cfg.CodexHome); value != "" {
-		return value
-	}
-	if cfg.Daemon != nil {
-		return strings.TrimSpace(cfg.Daemon.CodexHome)
-	}
-	return ""
 }
 
 func clearLegacyDaemonField(cfg *cli.CLIConfig, field string) {

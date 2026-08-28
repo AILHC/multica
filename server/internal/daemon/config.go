@@ -230,7 +230,6 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	// purely from env-var configuration. We log a warning and proceed with
 	// no overrides.
 	var (
-		daemonProfileConfig     *cli.DaemonConfig
 		profileDeviceName       string
 		profileWorkspacesRoot   string
 		profileCodexHome        string
@@ -240,21 +239,10 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		slog.Warn("could not load CLI config for backend overrides; proceeding without",
 			"profile", overrides.Profile, "err", err)
 	} else {
-		daemonProfileConfig = cliCfg.Daemon
-		profileDeviceName = strings.TrimSpace(cliCfg.DeviceName)
-		profileWorkspacesRoot = strings.TrimSpace(cliCfg.WorkspacesRoot)
-		profileCodexHome = strings.TrimSpace(cliCfg.CodexHome)
-		if daemonProfileConfig != nil {
-			if profileDeviceName == "" {
-				profileDeviceName = strings.TrimSpace(daemonProfileConfig.DeviceName)
-			}
-			if profileWorkspacesRoot == "" {
-				profileWorkspacesRoot = strings.TrimSpace(daemonProfileConfig.WorkspacesRoot)
-			}
-			if profileCodexHome == "" {
-				profileCodexHome = strings.TrimSpace(daemonProfileConfig.CodexHome)
-			}
-		}
+		effectiveDaemon := cliCfg.EffectiveDaemonConfig()
+		profileDeviceName = effectiveDaemon.DeviceName
+		profileWorkspacesRoot = effectiveDaemon.WorkspacesRoot
+		profileCodexHome = effectiveDaemon.CodexHome
 		if oc := openclawOverrideFrom(cliCfg); oc != nil {
 			applyOpenclawOverride(oc)
 		}

@@ -242,25 +242,6 @@ func TestApplyConfigSetSupportsDaemonKeys(t *testing.T) {
 	}
 }
 
-func TestEffectiveCodexHomeIgnoresWhitespaceValues(t *testing.T) {
-	t.Parallel()
-
-	legacyHome := filepath.Join(t.TempDir(), "legacy-codex")
-	if got := effectiveCodexHome(cli.CLIConfig{
-		CodexHome: " \t ",
-		Daemon:    &cli.DaemonConfig{CodexHome: "  " + legacyHome + "  "},
-	}); got != legacyHome {
-		t.Fatalf("effectiveCodexHome() = %q, want trimmed legacy value %q", got, legacyHome)
-	}
-
-	if got := effectiveCodexHome(cli.CLIConfig{
-		CodexHome: " \t ",
-		Daemon:    &cli.DaemonConfig{CodexHome: " \r\n "},
-	}); got != "" {
-		t.Fatalf("effectiveCodexHome() = %q, want empty for whitespace-only values", got)
-	}
-}
-
 func TestApplyConfigSetMigratesLegacyDaemonKeysToFlatFields(t *testing.T) {
 	t.Parallel()
 
@@ -271,9 +252,10 @@ func TestApplyConfigSetMigratesLegacyDaemonKeysToFlatFields(t *testing.T) {
 			CodexHome:      "/legacy/codex",
 		},
 	}
-	if effectiveDeviceName(cfg) != "legacy-device" ||
-		effectiveWorkspacesRoot(cfg) != "/legacy/workspaces" ||
-		effectiveCodexHome(cfg) != "/legacy/codex" {
+	effective := cfg.EffectiveDaemonConfig()
+	if effective.DeviceName != "legacy-device" ||
+		effective.WorkspacesRoot != "/legacy/workspaces" ||
+		effective.CodexHome != "/legacy/codex" {
 		t.Fatalf("legacy daemon values were not readable: %+v", cfg)
 	}
 

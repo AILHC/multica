@@ -962,10 +962,11 @@ func runDaemonForeground(cmd *cobra.Command) error {
 	// value when BOTH the flag AND the env are unset, so a live env
 	// override (typical for systemd units) always wins over the file. This
 	// matches server_url's precedence above and resolves #3824.
+	effectiveDaemon := fileCfg.EffectiveDaemonConfig()
 	deviceNameFlag := resolveDaemonStringOverride(
 		flagString(cmd, "device-name"),
 		"MULTICA_DAEMON_DEVICE_NAME",
-		effectiveDeviceName(fileCfg),
+		effectiveDaemon.DeviceName,
 	)
 	runtimeNameFlag := resolveDaemonStringOverride(
 		flagString(cmd, "runtime-name"),
@@ -975,7 +976,7 @@ func runDaemonForeground(cmd *cobra.Command) error {
 	sharedCodexHome := resolveDaemonStringOverride(
 		flagString(cmd, "codex-home"),
 		"CODEX_HOME",
-		effectiveCodexHome(fileCfg),
+		effectiveDaemon.CodexHome,
 	)
 	workspacesRoot, err := resolveWorkspacesRootForProfile(profile, flagString(cmd, "workspaces-root"))
 	if err != nil {
@@ -1664,7 +1665,7 @@ func resolveWorkspacesRootForProfile(profile, flagValue string) (string, error) 
 		"MULTICA_WORKSPACES_ROOT",
 		"",
 	)
-	return daemon.ResolveWorkspacesRoot(profile, effectiveWorkspacesRoot(fileCfg), override)
+	return daemon.ResolveWorkspacesRoot(profile, fileCfg.EffectiveDaemonConfig().WorkspacesRoot, override)
 }
 
 // resolveDaemonDurationOverride is the numeric counterpart for

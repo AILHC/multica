@@ -197,6 +197,36 @@ func TestCLIConfig_DaemonConfig_OmittedWhenNil(t *testing.T) {
 	}
 }
 
+func TestCLIConfig_EffectiveDaemonConfigTrimsAndFallsBackToLegacy(t *testing.T) {
+	t.Parallel()
+
+	cfg := CLIConfig{
+		DeviceName:     " \t ",
+		WorkspacesRoot: "  flat-workspaces  ",
+		CodexHome:      " \r\n ",
+		Daemon: &DaemonConfig{
+			DeviceName:     "  legacy-device  ",
+			WorkspacesRoot: "  legacy-workspaces  ",
+			CodexHome:      "  legacy-codex  ",
+		},
+	}
+
+	effective := cfg.EffectiveDaemonConfig()
+	if effective.DeviceName != "legacy-device" {
+		t.Fatalf("DeviceName = %q, want trimmed legacy value", effective.DeviceName)
+	}
+	if effective.WorkspacesRoot != "flat-workspaces" {
+		t.Fatalf("WorkspacesRoot = %q, want trimmed flat value", effective.WorkspacesRoot)
+	}
+	if effective.CodexHome != "legacy-codex" {
+		t.Fatalf("CodexHome = %q, want trimmed legacy value", effective.CodexHome)
+	}
+
+	if got := (CLIConfig{DeviceName: " ", WorkspacesRoot: "\t", CodexHome: "\r\n"}).EffectiveDaemonConfig(); got != (DaemonConfig{}) {
+		t.Fatalf("whitespace-only config resolved to %+v, want empty daemon config", got)
+	}
+}
+
 // TestCLIConfig_OpenClawOverride_PartialFieldsOmitted verifies that an
 // override with only one field set does not emit empty strings for the
 // unset field. Important so users can intentionally set only BinaryPath

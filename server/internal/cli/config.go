@@ -174,6 +174,28 @@ type DaemonConfig struct {
 	CodexHome      string `json:"codex_home,omitempty"`
 }
 
+// EffectiveDaemonConfig resolves the flat daemon fields over the legacy
+// nested block. Whitespace-only values are unset, and returned values are
+// trimmed so every caller observes the same precedence.
+func (c CLIConfig) EffectiveDaemonConfig() DaemonConfig {
+	var effective DaemonConfig
+	if c.Daemon != nil {
+		effective.DeviceName = strings.TrimSpace(c.Daemon.DeviceName)
+		effective.WorkspacesRoot = strings.TrimSpace(c.Daemon.WorkspacesRoot)
+		effective.CodexHome = strings.TrimSpace(c.Daemon.CodexHome)
+	}
+	if value := strings.TrimSpace(c.DeviceName); value != "" {
+		effective.DeviceName = value
+	}
+	if value := strings.TrimSpace(c.WorkspacesRoot); value != "" {
+		effective.WorkspacesRoot = value
+	}
+	if value := strings.TrimSpace(c.CodexHome); value != "" {
+		effective.CodexHome = value
+	}
+	return effective
+}
+
 // BackendOverrides holds per-backend configuration overrides. Each field is
 // optional; nil means "no override for this backend". Keep new fields additive
 // and tagged with `json:",omitempty"` so empty values do not change the saved

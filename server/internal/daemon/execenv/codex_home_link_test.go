@@ -64,6 +64,56 @@ func TestPrepareCodexHome_RemovesAuthFromPreviouslySelectedSharedHome(t *testing
 	}
 }
 
+func TestPrepareCodexHome_UsesExplicitSharedHomeForCaches(t *testing.T) {
+	explicitHome := t.TempDir()
+	environmentHome := t.TempDir()
+	taskHome := filepath.Join(t.TempDir(), "codex-home")
+	t.Setenv("CODEX_HOME", environmentHome)
+
+	if err := os.WriteFile(filepath.Join(explicitHome, codexModelsCacheFile), []byte(`{"source":"explicit"}`), 0o600); err != nil {
+		t.Fatalf("write explicit models cache: %v", err)
+	}
+	explicitPlugin := filepath.Join(explicitHome, "plugins", "cache", "explicit-plugin")
+	if err := os.MkdirAll(explicitPlugin, 0o755); err != nil {
+		t.Fatalf("create explicit plugin cache: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(explicitPlugin, "marker.txt"), []byte("explicit"), 0o600); err != nil {
+		t.Fatalf("write explicit plugin marker: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(environmentHome, codexModelsCacheFile), []byte(`{"source":"environment"}`), 0o600); err != nil {
+		t.Fatalf("write environment models cache: %v", err)
+	}
+	environmentPlugin := filepath.Join(environmentHome, "plugins", "cache", "environment-plugin")
+	if err := os.MkdirAll(environmentPlugin, 0o755); err != nil {
+		t.Fatalf("create environment plugin cache: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(environmentPlugin, "marker.txt"), []byte("environment"), 0o600); err != nil {
+		t.Fatalf("write environment plugin marker: %v", err)
+	}
+
+	if err := prepareCodexHomeWithOpts(taskHome, CodexHomeOptions{SharedCodexHome: explicitHome}, testLogger()); err != nil {
+		t.Fatalf("prepare with explicit shared home: %v", err)
+	}
+	modelsCache, err := os.ReadFile(filepath.Join(taskHome, codexModelsCacheFile))
+	if err != nil {
+		t.Fatalf("read task models cache: %v", err)
+	}
+	if string(modelsCache) != `{"source":"explicit"}` {
+		t.Fatalf("task models cache = %q, want explicit shared cache", modelsCache)
+	}
+	pluginMarker, err := os.ReadFile(filepath.Join(taskHome, "plugins", "cache", "explicit-plugin", "marker.txt"))
+	if err != nil {
+		t.Fatalf("read explicit plugin marker through task cache: %v", err)
+	}
+	if string(pluginMarker) != "explicit" {
+		t.Fatalf("plugin marker = %q, want explicit shared cache", pluginMarker)
+	}
+	if _, err := os.Lstat(filepath.Join(taskHome, "plugins", "cache", "environment-plugin")); !os.IsNotExist(err) {
+		t.Fatalf("environment plugin cache leaked into task home: %v", err)
+	}
+}
+
 func TestEnsureSymlink_ReplacesStaleRegularFile(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
