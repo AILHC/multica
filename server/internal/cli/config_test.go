@@ -543,8 +543,7 @@ func TestCLIConfig_TaskRootMustBeAbsolute(t *testing.T) {
 // record that in the config file, not just in a shell export the GUI-launched
 // daemon never sees.
 func TestCLIConfig_OpenClawCLITimeout_RoundTrip(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("HOME", tmp)
+	testHome(t)
 
 	original := CLIConfig{
 		ServerURL: "https://api.multica.ai",

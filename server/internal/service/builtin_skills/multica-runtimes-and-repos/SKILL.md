@@ -49,6 +49,17 @@ multica repo checkout <url> --ref <branch-or-sha>
 
 `repo checkout` requires both `MULTICA_DAEMON_PORT` and the injected task-scoped `MULTICA_TOKEN`; it is intended to run inside the active daemon task and from that task's workdir (or a descendant). The local daemon authenticates the token against its active-task registry, derives workspace/task/agent identity itself, and rejects a caller-supplied workdir outside that task. If either variable is absent, you are not in the normal agent checkout path. When a project `github_repo` resource has `resource_ref.ref`, `repo checkout <url>` uses that ref by default for the current task; an explicit `repo checkout <url> --ref <branch-or-sha>` overrides it.
 
+## Codex shared home
+
+For a Codex runtime, `codex_home` selects the Owner-controlled shared Codex home that seeds each isolated task-local `CODEX_HOME`. A host operator can persist it per profile or override it for one daemon start:
+
+```bash
+multica --profile <profile> config set codex_home <absolute-path>
+multica --profile <profile> daemon start --codex-home <absolute-path>
+```
+
+Resolution order is `--codex-home`, `CODEX_HOME`, profile `codex_home`, then `~/.codex`. The resolved home supplies Codex config, auth, caches, plugins, local skills, MCP servers, and the profile-scoped session store; task homes and task session views remain isolated. Persisting `codex_home` does not reconfigure a running daemon, so use it on the next deliberate start or restart rather than restarting an active runtime just to test. Run these host-profile commands outside a managed task: task-local `config set` only changes private task state and cannot reconfigure the daemon that hosts it.
+
 ## Task CLI boundary
 
 The daemon injects a task-scoped `mat_` credential for Multica API commands and a private task-local Multica configuration root. Inside that managed task context:
