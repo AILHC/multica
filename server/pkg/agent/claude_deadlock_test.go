@@ -27,8 +27,17 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(0)
 	}
+	if os.Getenv(codeartsModelHelperEnv) == "1" {
+		runFakeCodeArtsModelHelper()
+		os.Exit(0)
+	}
 	if os.Getenv(opencodeStdinHelperEnv) == "1" {
 		runFakeOpencodeStdinHelper()
+		os.Exit(0)
+	}
+	// Cursor lifecycle fixtures re-execute this binary with the CLI's real argv.
+	if mode := os.Getenv(cursorFakeModeEnv); mode != "" {
+		runFakeCursorStream(mode)
 		os.Exit(0)
 	}
 	switch mode := os.Getenv("CLAUDE_FAKE_MODE"); mode {

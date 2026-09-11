@@ -163,6 +163,8 @@ func localSkillRootsForProvider(provider, sharedCodexHome string) ([]localSkillR
 			providerRoot = filepath.Join(home, ".copilot", "skills")
 		case "opencode":
 			providerRoot = filepath.Join(home, ".config", "opencode", "skills")
+		case "codearts":
+			providerRoot = filepath.Join(home, ".codeartsdoer", "skills")
 		case "deveco":
 			providerRoot = filepath.Join(home, ".config", "deveco", "skills")
 		case "openclaw":
