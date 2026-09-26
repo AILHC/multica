@@ -151,16 +151,15 @@ done
 
 func TestGrokSupplementTargetsActivePrompt(t *testing.T) {
 	t.Parallel()
-	fakePath := filepath.Join(t.TempDir(), "grok")
 	requestsPath := filepath.Join(t.TempDir(), "requests.jsonl")
-	writeTestExecutable(t, fakePath, []byte(fakeGrokACPScript()))
+	fakePath, fixtureEnv := grokSupplementFixture(t, map[string]string{
+		"GROK_WAIT_FOR_INTERJECT":         "1",
+		"GROK_NO_OUTPUT_BEFORE_INTERJECT": "1",
+		"GROK_REQUESTS_FILE":              requestsPath,
+	})
 	backend, err := New("grok", Config{
 		ExecutablePath: fakePath,
-		Env: map[string]string{
-			"GROK_WAIT_FOR_INTERJECT":         "1",
-			"GROK_NO_OUTPUT_BEFORE_INTERJECT": "1",
-			"GROK_REQUESTS_FILE":              requestsPath,
-		},
+		Env:            fixtureEnv,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -227,14 +226,13 @@ func TestGrokSupplementTargetsActivePrompt(t *testing.T) {
 }
 
 func TestGrokSupplementTimesOutIndependentlyAndAllowsNextMessage(t *testing.T) {
-	fakePath := filepath.Join(t.TempDir(), "grok")
-	writeTestExecutable(t, fakePath, []byte(fakeGrokACPScript()))
+	fakePath, fixtureEnv := grokSupplementFixture(t, map[string]string{
+		"GROK_WAIT_FOR_INTERJECT":          "1",
+		"GROK_INTERJECT_NO_FIRST_RESPONSE": "1",
+	})
 	backend, err := New("grok", Config{
 		ExecutablePath: fakePath,
-		Env: map[string]string{
-			"GROK_WAIT_FOR_INTERJECT":          "1",
-			"GROK_INTERJECT_NO_FIRST_RESPONSE": "1",
-		},
+		Env:            fixtureEnv,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -305,14 +303,13 @@ func TestGrokSupplementTimesOutIndependentlyAndAllowsNextMessage(t *testing.T) {
 
 func TestGrokSupplementReportsACPRejection(t *testing.T) {
 	t.Parallel()
-	fakePath := filepath.Join(t.TempDir(), "grok")
-	writeTestExecutable(t, fakePath, []byte(fakeGrokACPScript()))
+	fakePath, fixtureEnv := grokSupplementFixture(t, map[string]string{
+		"GROK_WAIT_FOR_INTERJECT":    "1",
+		"GROK_INTERJECT_UNSUPPORTED": "1",
+	})
 	backend, err := New("grok", Config{
 		ExecutablePath: fakePath,
-		Env: map[string]string{
-			"GROK_WAIT_FOR_INTERJECT":    "1",
-			"GROK_INTERJECT_UNSUPPORTED": "1",
-		},
+		Env:            fixtureEnv,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -357,17 +354,16 @@ func TestGrokSupplementHandlesObservedNestedResultStatus(t *testing.T) {
 		{status: "in_band_error", wantErr: "delivery failed"},
 	} {
 		t.Run(tc.status, func(t *testing.T) {
-			fakePath := filepath.Join(t.TempDir(), "grok")
-			writeTestExecutable(t, fakePath, []byte(fakeGrokACPScript()))
 			env := map[string]string{"GROK_WAIT_FOR_INTERJECT": "1"}
 			if tc.status == "in_band_error" {
 				env["GROK_INTERJECT_EXTENSION_ERROR"] = "1"
 			} else {
 				env["GROK_INTERJECT_NESTED_STATUS"] = tc.status
 			}
+			fakePath, fixtureEnv := grokSupplementFixture(t, env)
 			backend, err := New("grok", Config{
 				ExecutablePath: fakePath,
-				Env:            env,
+				Env:            fixtureEnv,
 			})
 			if err != nil {
 				t.Fatal(err)

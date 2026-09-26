@@ -20,6 +20,13 @@ import (
 // invoked with a real agent CLI's argv: TestMain runs before the testing
 // package parses flags, so arguments like `run --format json` never reach it.
 func TestMain(m *testing.M) {
+	if os.Getenv(grokSupplementHelperModeEnv) != "" {
+		if err := runFakeGrokSupplementHelper(); err != nil {
+			fmt.Fprintf(os.Stderr, "Grok supplement helper: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 	if os.Getenv(acpRecordingHelperModeEnv) != "" {
 		if err := runFakeACPRecordingHelper(); err != nil {
 			fmt.Fprintf(os.Stderr, "ACP recording helper: %v\n", err)
