@@ -306,6 +306,9 @@ func loadRuntimeMcpServerConfigs(provider, sharedCodexHome string) (map[string]a
 		}
 		key, format = "mcp.servers", "json"
 	default:
+		// pi is intentionally absent. The CLI reads ~/.pi/agent/mcp.json on its
+		// own, and a project .pi/mcp.json replaces entries with the same name.
+		// Copying the user file into the task file would start those servers twice.
 		return map[string]any{}, false, nil
 	}
 
@@ -457,6 +460,10 @@ func listRuntimeLocalMcpServers(provider, sharedCodexHome string) ([]runtimeLoca
 			path = filepath.Join(stateDir, "openclaw.json")
 		}
 		key, source, format = "mcp.servers", "User config", "json"
+	case "pi":
+		// Inventory only, same as omp. Pi already loads this file at startup,
+		// so loadRuntimeMcpServerConfigs must not merge it into the task.
+		path, key, source, format = filepath.Join(home, ".pi", "agent", "mcp.json"), "mcpServers", "User config", "json"
 	case "omp":
 		// Inventory scope: omp discovers servers from a multi-level precedence
 		// chain (.omp/mcp.json, .omp/.mcp.json, profile/user-level configs, and

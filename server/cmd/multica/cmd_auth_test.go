@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/multica-ai/multica/server/internal/cli"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -11,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/multica-ai/multica/server/internal/cli"
+	"github.com/multica-ai/multica/server/internal/testutil"
 	"github.com/spf13/cobra"
 )
 
@@ -22,10 +23,11 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	for key, value := range map[string]string{
-		"HOME":        home,
-		"USERPROFILE": home,
-		"HOMEDRIVE":   filepath.VolumeName(home),
-		"HOMEPATH":    strings.TrimPrefix(home, filepath.VolumeName(home)),
+		"HOME":         home,
+		"LOCALAPPDATA": filepath.Join(home, "AppData", "Local"),
+		"USERPROFILE":  home,
+		"HOMEDRIVE":    filepath.VolumeName(home),
+		"HOMEPATH":     strings.TrimPrefix(home, filepath.VolumeName(home)),
 	} {
 		if err := os.Setenv(key, value); err != nil {
 			fmt.Fprintf(os.Stderr, "set package test home %s: %v\n", key, err)
@@ -33,6 +35,7 @@ func TestMain(m *testing.M) {
 		}
 	}
 	for _, key := range []string{
+
 		"MULTICA_AGENT_ID",
 		"MULTICA_APP_URL",
 		"MULTICA_PROFILE",
@@ -55,23 +58,7 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func TestPackageTestHomeIsIsolated(t *testing.T) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	configPath, err := cli.CLIConfigPath()
-	if err != nil {
-		t.Fatal(err)
-	}
-	relative, err := filepath.Rel(home, configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		t.Fatalf("CLI config path escaped package test home: %s", configPath)
-	}
-}
+var redirectTestHome = testutil.RedirectUserHome
 
 // testCmd returns a minimal cobra.Command with the --profile persistent flag
 // registered, matching the rootCmd setup used in production.
@@ -378,7 +365,7 @@ func TestLoginTokenFlagParsing(t *testing.T) {
 
 func TestRunAuthStatusTaskContextDoesNotPrintCredential(t *testing.T) {
 	const fakeTaskToken = "mat_task_status_sentinel"
-	testHome(t)
+	redirectTestHome(t, t.TempDir())
 	t.Setenv("MULTICA_AGENT_ID", "agent-test")
 	t.Setenv("MULTICA_TASK_ID", "task-test")
 	t.Setenv("MULTICA_TOKEN", fakeTaskToken)
@@ -417,7 +404,7 @@ func TestRunAuthStatusTaskContextDoesNotPrintCredential(t *testing.T) {
 
 func TestRunAuthStatusTaskContextRequiresTaskToken(t *testing.T) {
 	ownerHome := t.TempDir()
-	setTestHome(t, ownerHome)
+	redirectTestHome(t, ownerHome)
 	t.Setenv("MULTICA_AGENT_ID", "agent-test")
 	t.Setenv("MULTICA_TASK_ID", "task-test")
 	t.Setenv("MULTICA_TASK_CONFIG_ROOT", filepath.Join(t.TempDir(), "task-multica"))
@@ -478,7 +465,7 @@ func TestRunAuthStatusTaskContextRequiresTaskToken(t *testing.T) {
 
 func TestHumanAuthCommandsFailClosedInTaskContext(t *testing.T) {
 	ownerHome := t.TempDir()
-	setTestHome(t, ownerHome)
+	redirectTestHome(t, ownerHome)
 	t.Setenv("MULTICA_AGENT_ID", "agent-test")
 	t.Setenv("MULTICA_TASK_ID", "task-test")
 	t.Setenv("MULTICA_TOKEN", "mat_task_sentinel")
@@ -581,5 +568,23 @@ func TestValidateLoginTokenPrefix(t *testing.T) {
 		if !strings.Contains(err.Error(), p) {
 			t.Errorf("error %q does not mention prefix %q", err.Error(), p)
 		}
+	}
+}
+
+func TestPackageTestHomeIsIsolated(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath, err := cli.CLIConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	relative, err := filepath.Rel(home, configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		t.Fatalf("CLI config path escaped package test home: %s", configPath)
 	}
 }

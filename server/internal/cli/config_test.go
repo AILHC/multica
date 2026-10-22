@@ -30,7 +30,8 @@ func testHome(t *testing.T) string {
 // important guarantee of issue #3875's PR: existing on-disk configs MUST
 // continue to work byte-for-byte.
 func TestCLIConfig_BackwardCompat_OldFileLoadsWithNilBackends(t *testing.T) {
-	tmp := testHome(t)
+	tmp := t.TempDir()
+	redirectTestHome(t, tmp)
 
 	// Write a 4-field config exactly as the historical daemon would have.
 	cfgDir := filepath.Join(tmp, ".multica")
@@ -69,7 +70,8 @@ func TestCLIConfig_BackwardCompat_OldFileLoadsWithNilBackends(t *testing.T) {
 // their config files must stay byte-identical, so a future downgrade to
 // an older daemon doesn't trip on an empty `backends: null` line.
 func TestCLIConfig_BackwardCompat_NilBackendsOmittedFromJSON(t *testing.T) {
-	tmp := testHome(t)
+	tmp := t.TempDir()
+	redirectTestHome(t, tmp)
 
 	cfg := CLIConfig{
 		ServerURL: "https://api.multica.ai",
@@ -100,7 +102,8 @@ func TestCLIConfig_BackwardCompat_NilBackendsOmittedFromJSON(t *testing.T) {
 // TestCLIConfig_OpenClawOverride_RoundTrip verifies that setting BinaryPath
 // and StateDir survives a save/load cycle.
 func TestCLIConfig_OpenClawOverride_RoundTrip(t *testing.T) {
-	testHome(t)
+	tmp := t.TempDir()
+	redirectTestHome(t, tmp)
 
 	original := CLIConfig{
 		ServerURL: "https://api.multica.ai",
@@ -235,7 +238,8 @@ func TestCLIConfig_EffectiveDaemonConfigTrimsAndFallsBackToLegacy(t *testing.T) 
 // (or only StateDir) and have the other follow the historical default,
 // without an empty string overriding env-var precedence.
 func TestCLIConfig_OpenClawOverride_PartialFieldsOmitted(t *testing.T) {
-	tmp := testHome(t)
+	tmp := t.TempDir()
+	redirectTestHome(t, tmp)
 
 	cfg := CLIConfig{
 		ServerURL: "https://api.multica.ai",
@@ -279,7 +283,8 @@ func TestCLIConfig_OpenClawOverride_PartialFieldsOmitted(t *testing.T) {
 // round-trip — the set-path / unset-path CLI commands rely on a
 // load->modify->save cycle never dropping config the user already had.
 func TestCLIConfig_ProfileCommandOverrides_RoundTrip(t *testing.T) {
-	testHome(t)
+	tmp := t.TempDir()
+	redirectTestHome(t, tmp)
 
 	original := CLIConfig{
 		ServerURL:   "https://api.multica.ai",
@@ -337,7 +342,8 @@ func TestCLIConfig_ProfileCommandOverrides_RoundTrip(t *testing.T) {
 // omitempty tag keeps the key out of the on-disk JSON when no overrides are
 // set, so configs for users who never pin a path stay byte-stable.
 func TestCLIConfig_ProfileCommandOverrides_OmittedWhenEmpty(t *testing.T) {
-	tmp := testHome(t)
+	tmp := t.TempDir()
+	redirectTestHome(t, tmp)
 
 	cfg := CLIConfig{ServerURL: "https://api.multica.ai", Token: "mul_xyz"}
 	if err := SaveCLIConfig(cfg); err != nil {
@@ -369,7 +375,8 @@ func TestCLIConfig_ProfileCommandOverrides_OmittedWhenEmpty(t *testing.T) {
 func TestCLIConfig_UnknownFieldsArePreserved(t *testing.T) {
 	t.Skip("documenting known limitation: encoding/json drops unknown fields on round-trip; future PR can switch to a preserving encoder")
 
-	tmp := testHome(t)
+	tmp := t.TempDir()
+	redirectTestHome(t, tmp)
 
 	cfgDir := filepath.Join(tmp, ".multica")
 	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
@@ -409,7 +416,8 @@ func TestCLIConfig_UnknownFieldsArePreserved(t *testing.T) {
 // drops one of these fields from the schema, this test fails at write
 // time instead of silently losing the operator's config on restart.
 func TestCLIConfig_DaemonKnobs_RoundTrip(t *testing.T) {
-	testHome(t)
+	tmp := t.TempDir()
+	redirectTestHome(t, tmp)
 
 	zero := "0s"
 	original := CLIConfig{
@@ -443,7 +451,7 @@ func TestCLIConfig_DaemonKnobs_RoundTrip(t *testing.T) {
 func TestCLIConfig_TaskRootOverridesOwnerHome(t *testing.T) {
 	ownerHome := t.TempDir()
 	taskRoot := filepath.Join(t.TempDir(), "task-multica")
-	setTestHome(t, ownerHome)
+	redirectTestHome(t, ownerHome)
 	t.Setenv("MULTICA_TASK_CONFIG_ROOT", taskRoot)
 
 	ownerPath := filepath.Join(ownerHome, ".multica", "config.json")
@@ -506,7 +514,7 @@ func TestCLIConfig_TaskRootOverridesOwnerHome(t *testing.T) {
 
 func TestCLIConfig_NoTaskRootKeepsInteractiveHomeResolution(t *testing.T) {
 	home := t.TempDir()
-	setTestHome(t, home)
+	redirectTestHome(t, home)
 	t.Setenv("MULTICA_TASK_CONFIG_ROOT", "")
 
 	path, err := CLIConfigPathForProfile("dev")
@@ -545,7 +553,8 @@ func TestCLIConfig_TaskRootMustBeAbsolute(t *testing.T) {
 // record that in the config file, not just in a shell export the GUI-launched
 // daemon never sees.
 func TestCLIConfig_OpenClawCLITimeout_RoundTrip(t *testing.T) {
-	testHome(t)
+	tmp := t.TempDir()
+	redirectTestHome(t, tmp)
 
 	original := CLIConfig{
 		ServerURL: "https://api.multica.ai",

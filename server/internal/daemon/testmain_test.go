@@ -1,15 +1,23 @@
+// Copyright 2026 Multica. All rights reserved.
+
 package daemon
 
 import (
 	"fmt"
+	"github.com/multica-ai/multica/server/internal/cli"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/multica-ai/multica/server/internal/cli"
+	"github.com/multica-ai/multica/server/internal/testutil"
 )
 
+// TestMain redirects the home environment variables to one scratch directory
+// for the whole binary before any test runs. Config paths resolve through
+// os.UserHomeDir — USERPROFILE on Windows, HOME elsewhere — while Hermes uses
+// LOCALAPPDATA on Windows. Process-wide redirection isolates tests that forget
+// their own redirect; per-test t.Setenv overrides still take precedence.
 func TestMain(m *testing.M) {
 	home, err := os.MkdirTemp("", "multica-daemon-tests-")
 	if err != nil {
@@ -17,10 +25,11 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	for key, value := range map[string]string{
-		"HOME":        home,
-		"USERPROFILE": home,
-		"HOMEDRIVE":   filepath.VolumeName(home),
-		"HOMEPATH":    strings.TrimPrefix(home, filepath.VolumeName(home)),
+		"HOME":         home,
+		"LOCALAPPDATA": filepath.Join(home, "AppData", "Local"),
+		"USERPROFILE":  home,
+		"HOMEDRIVE":    filepath.VolumeName(home),
+		"HOMEPATH":     strings.TrimPrefix(home, filepath.VolumeName(home)),
 	} {
 		if err := os.Setenv(key, value); err != nil {
 			fmt.Fprintf(os.Stderr, "set package test home %s: %v\n", key, err)
@@ -28,6 +37,10 @@ func TestMain(m *testing.M) {
 		}
 	}
 	for _, key := range []string{
+		"MULTICA_AGENT_ID",
+		"MULTICA_TASK_ID",
+		"MULTICA_DAEMON_PORT",
+		"MULTICA_WORKSPACE_ID",
 		"MULTICA_APP_URL",
 		"MULTICA_PROFILE",
 		"MULTICA_SERVER_URL",
@@ -49,6 +62,8 @@ func TestMain(m *testing.M) {
 	}
 	os.Exit(code)
 }
+
+var redirectTestHome = testutil.RedirectUserHome
 
 func TestPackageTestHomeIsIsolated(t *testing.T) {
 	home, err := os.UserHomeDir()
