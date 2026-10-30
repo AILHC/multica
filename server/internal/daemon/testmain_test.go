@@ -19,6 +19,9 @@ import (
 // LOCALAPPDATA on Windows. Process-wide redirection isolates tests that forget
 // their own redirect; per-test t.Setenv overrides still take precedence.
 func TestMain(m *testing.M) {
+	if testutil.RunPiCleanupFixture() {
+		os.Exit(0)
+	}
 	home, err := os.MkdirTemp("", "multica-daemon-tests-")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "create package test home: %v\n", err)
