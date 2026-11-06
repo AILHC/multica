@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -921,7 +922,7 @@ func TestWriteContextFiles(t *testing.T) {
 		},
 	}
 
-	if err := writeContextFiles(dir, "", ctx, nil); err != nil {
+	if _, err := writeContextFiles(dir, "", ctx, nil); err != nil {
 		t.Fatalf("writeContextFiles failed: %v", err)
 	}
 
@@ -962,7 +963,7 @@ func TestWriteContextFilesLeavesNoAgentContextWhenNothingToWrite(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	if err := writeContextFiles(dir, "", TaskContextForEnv{IssueID: "minimal-issue-id"}, nil); err != nil {
+	if _, err := writeContextFiles(dir, "", TaskContextForEnv{IssueID: "minimal-issue-id"}, nil); err != nil {
 		t.Fatalf("writeContextFiles failed: %v", err)
 	}
 
@@ -993,7 +994,7 @@ func TestWriteContextFilesClaudeNativeSkills(t *testing.T) {
 		},
 	}
 
-	if err := writeContextFiles(dir, "claude", ctx, nil); err != nil {
+	if _, err := writeContextFiles(dir, "claude", ctx, nil); err != nil {
 		t.Fatalf("writeContextFiles failed: %v", err)
 	}
 
@@ -1053,7 +1054,7 @@ func TestWriteContextFilesCodebuddyNativeSkills(t *testing.T) {
 		},
 	}
 
-	if err := writeContextFiles(dir, "codebuddy", ctx, nil); err != nil {
+	if _, err := writeContextFiles(dir, "codebuddy", ctx, nil); err != nil {
 		t.Fatalf("writeContextFiles failed: %v", err)
 	}
 
@@ -1258,7 +1259,7 @@ func TestReuseSkillRefreshIsCanonicalAcrossProviders(t *testing.T) {
 
 			// First dispatch: write context + persist the manifest.
 			m1 := &sidecarManifest{}
-			if err := writeContextFiles(workDir, provider, task, m1); err != nil {
+			if _, err := writeContextFiles(workDir, provider, task, m1); err != nil {
 				t.Fatalf("first writeContextFiles: %v", err)
 			}
 			if err := writeSidecarManifest(envRoot, m1); err != nil {
@@ -1280,7 +1281,7 @@ func TestReuseSkillRefreshIsCanonicalAcrossProviders(t *testing.T) {
 				t.Fatalf("CleanupSidecars: %v", err)
 			}
 			m2 := &sidecarManifest{}
-			if err := writeContextFiles(workDir, provider, task, m2); err != nil {
+			if _, err := writeContextFiles(workDir, provider, task, m2); err != nil {
 				t.Fatalf("second writeContextFiles: %v", err)
 			}
 			if err := writeSidecarManifest(envRoot, m2); err != nil {
@@ -1654,7 +1655,7 @@ func TestWriteContextFilesCopilotNativeSkills(t *testing.T) {
 		},
 	}
 
-	if err := writeContextFiles(dir, "copilot", ctx, nil); err != nil {
+	if _, err := writeContextFiles(dir, "copilot", ctx, nil); err != nil {
 		t.Fatalf("writeContextFiles failed: %v", err)
 	}
 
@@ -1708,7 +1709,7 @@ func TestWriteContextFilesOpencodeNativeSkills(t *testing.T) {
 		},
 	}
 
-	if err := writeContextFiles(dir, "opencode", ctx, nil); err != nil {
+	if _, err := writeContextFiles(dir, "opencode", ctx, nil); err != nil {
 		t.Fatalf("writeContextFiles failed: %v", err)
 	}
 
@@ -1787,7 +1788,7 @@ func TestWriteContextFilesForcesSkillFrontmatterNameToSlug(t *testing.T) {
 		},
 	}
 
-	if err := writeContextFiles(dir, "opencode", ctx, nil); err != nil {
+	if _, err := writeContextFiles(dir, "opencode", ctx, nil); err != nil {
 		t.Fatalf("writeContextFiles failed: %v", err)
 	}
 
@@ -1831,7 +1832,7 @@ func TestWriteContextFilesFrontmatterNameFollowsCollisionSlug(t *testing.T) {
 		},
 	}
 
-	if err := writeContextFiles(dir, "opencode", ctx, nil); err != nil {
+	if _, err := writeContextFiles(dir, "opencode", ctx, nil); err != nil {
 		t.Fatalf("writeContextFiles failed: %v", err)
 	}
 
@@ -1873,7 +1874,7 @@ func TestWriteContextFilesLeavesNestedFrontmatterNameAlone(t *testing.T) {
 		},
 	}
 
-	if err := writeContextFiles(dir, "opencode", ctx, nil); err != nil {
+	if _, err := writeContextFiles(dir, "opencode", ctx, nil); err != nil {
 		t.Fatalf("writeContextFiles failed: %v", err)
 	}
 
@@ -1912,7 +1913,7 @@ func TestWriteContextFilesInjectsNameIntoNamelessFrontmatter(t *testing.T) {
 		},
 	}
 
-	if err := writeContextFiles(dir, "opencode", ctx, nil); err != nil {
+	if _, err := writeContextFiles(dir, "opencode", ctx, nil); err != nil {
 		t.Fatalf("writeContextFiles failed: %v", err)
 	}
 
@@ -1950,7 +1951,7 @@ func TestWriteContextFilesOpenclawNativeSkills(t *testing.T) {
 		},
 	}
 
-	if err := writeContextFiles(dir, "openclaw", ctx, nil); err != nil {
+	if _, err := writeContextFiles(dir, "openclaw", ctx, nil); err != nil {
 		t.Fatalf("writeContextFiles failed: %v", err)
 	}
 
@@ -1990,7 +1991,7 @@ func TestWriteContextFilesKiroNativeSkills(t *testing.T) {
 		},
 	}
 
-	if err := writeContextFiles(dir, "kiro", ctx, nil); err != nil {
+	if _, err := writeContextFiles(dir, "kiro", ctx, nil); err != nil {
 		t.Fatalf("writeContextFiles failed: %v", err)
 	}
 
@@ -2017,7 +2018,7 @@ func TestWriteContextFilesQoderNativeSkills(t *testing.T) {
 		},
 	}
 
-	if err := writeContextFiles(dir, "qoder", ctx, nil); err != nil {
+	if _, err := writeContextFiles(dir, "qoder", ctx, nil); err != nil {
 		t.Fatalf("writeContextFiles failed: %v", err)
 	}
 
@@ -2044,7 +2045,7 @@ func TestWriteContextFilesQoderCNNativeSkills(t *testing.T) {
 		},
 	}
 
-	if err := writeContextFiles(dir, "qoderclicn", ctx, nil); err != nil {
+	if _, err := writeContextFiles(dir, "qoderclicn", ctx, nil); err != nil {
 		t.Fatalf("writeContextFiles failed: %v", err)
 	}
 
@@ -2071,7 +2072,7 @@ func TestWriteContextFilesQwenNativeSkills(t *testing.T) {
 		},
 	}
 
-	if err := writeContextFiles(dir, "qwen", ctx, nil); err != nil {
+	if _, err := writeContextFiles(dir, "qwen", ctx, nil); err != nil {
 		t.Fatalf("writeContextFiles failed: %v", err)
 	}
 
@@ -2292,7 +2293,7 @@ func TestWriteContextFilesAntigravityNativeSkills(t *testing.T) {
 		},
 	}
 
-	if err := writeContextFiles(dir, "antigravity", ctx, nil); err != nil {
+	if _, err := writeContextFiles(dir, "antigravity", ctx, nil); err != nil {
 		t.Fatalf("writeContextFiles failed: %v", err)
 	}
 
@@ -2780,7 +2781,7 @@ func TestWriteContextFilesHermesSkipsWorkdirSkills(t *testing.T) {
 		},
 	}
 
-	if err := writeContextFiles(dir, "hermes", ctx, nil); err != nil {
+	if _, err := writeContextFiles(dir, "hermes", ctx, nil); err != nil {
 		t.Fatalf("writeContextFiles failed: %v", err)
 	}
 
@@ -3330,7 +3331,11 @@ func TestVerifyCodexHomeRootRejectsSwappedDirectory(t *testing.T) {
 
 	// Same path, different directory — what a swap looks like after the open.
 	if err := os.Rename(codexHome, filepath.Join(base, "moved-aside")); err != nil {
-		t.Fatalf("move original codex home: %v", err)
+		if runtime.GOOS != "windows" || !errors.Is(err, syscall.Errno(32)) {
+			t.Fatalf("move original codex home: %v", err)
+		}
+		// Windows pins the open directory; use another path to test the identity check.
+		codexHome = filepath.Join(base, "replacement-home")
 	}
 	if err := os.Mkdir(codexHome, 0o755); err != nil {
 		t.Fatalf("recreate codex home: %v", err)
@@ -3361,7 +3366,11 @@ func TestVerifyCodexHomeRootRejectsSymlinkedHome(t *testing.T) {
 
 	outside := t.TempDir()
 	if err := os.Rename(codexHome, filepath.Join(base, "moved-aside")); err != nil {
-		t.Fatalf("move original codex home: %v", err)
+		if runtime.GOOS != "windows" || !errors.Is(err, syscall.Errno(32)) {
+			t.Fatalf("move original codex home: %v", err)
+		}
+		// The pinned original cannot be renamed; the check must still reject a link.
+		codexHome = filepath.Join(base, "replacement-home")
 	}
 	if err := os.Symlink(outside, codexHome); err != nil {
 		t.Skipf("symlinks unsupported on this host: %v", err)
@@ -4341,6 +4350,9 @@ func TestResolveWindowsSandboxStateFailsClosed(t *testing.T) {
 // startup on both paths (fresh Prepare fails the task; Reuse declines the
 // reuse and falls back to Prepare, which re-runs this check on a fresh home).
 func TestPrepareCodexHomeFailsClosedWhenSandboxWriteFails(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows directory chmod does not enforce the POSIX read-only fixture")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("running as root bypasses the read-only permissions this test relies on")
 	}
@@ -4466,7 +4478,7 @@ func TestReuseRestoresCodexHome(t *testing.T) {
 	}
 	if info, err := os.Stat(reused.MulticaConfigRoot); err != nil {
 		t.Fatalf("stat restored MulticaConfigRoot: %v", err)
-	} else if got := info.Mode().Perm(); got != 0o700 {
+	} else if got := info.Mode().Perm(); runtime.GOOS != "windows" && got != 0o700 {
 		t.Fatalf("restored MulticaConfigRoot mode = %o, want 700", got)
 	}
 
