@@ -44,55 +44,89 @@ const bundledMarketplaceLinkModes = os.ModeSymlink | os.ModeIrregular
 //
 // The link mirrors exposeSharedCodexPluginCache: one directory link, shared
 // contents stay shared, task reclamation only ever removes the link. A shared
-// home without bundled marketplaces (a CLI-only machine) is a no-op — the
-// daemon never creates the shared directory, it only surfaces what the
-// desktop app already materialized.
+// home without bundled marketplaces clears any previous task link. The daemon
+// only exposes what the desktop app already materialized.
 func exposeSharedCodexBundledMarketplaces(codexHome, sharedHome string) error {
 	src := filepath.Join(sharedHome, filepath.FromSlash(codexBundledMarketplacesRelPath))
-	fi, err := os.Stat(src)
-	if err != nil {
-		if os.IsNotExist(err) {
-			// Nothing materialized in the shared home — nothing to expose. Do
-			// not create the shared directory: bundled marketplaces belong to
-			// the desktop app, not to the daemon.
-			return nil
-		}
-		// A read failure is not "absent": swallowing it would leave the task
-		// silently without its marketplaces and the operator without a clue
-		// (the caller warns on every error this function returns).
+	srcInfo, err := os.Stat(src)
+	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("stat shared bundled marketplaces %s: %w", src, err)
 	}
-	if !fi.IsDir() {
+	hasSource := err == nil && srcInfo.IsDir()
+
+	dst := filepath.Join(codexHome, filepath.FromSlash(codexBundledMarketplacesRelPath))
+	dstInfo, err := os.Lstat(dst)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("stat task bundled marketplaces %s: %w", dst, err)
+	}
+	isLink := dstInfo != nil && dstInfo.Mode()&bundledMarketplaceLinkModes != 0
+	if !hasSource && !isLink {
 		return nil
 	}
-	dst := filepath.Join(codexHome, filepath.FromSlash(codexBundledMarketplacesRelPath))
 	if err := verifyTaskHomeComponentsForLink(codexHome, filepath.Dir(dst)); err != nil {
 		return err
+	}
+	if hasSource {
+		if err := verifyBundledMarketplaceSource(src, dst); err != nil {
+			return err
+		}
+	}
+
+	if isLink {
+		target, err := os.Readlink(dst)
+		if err != nil {
+			return fmt.Errorf("read task bundled marketplaces link: %w", err)
+		}
+		if hasSource && sameCodexPath(target, src) {
+			return rewriteSharedBundledMarketplaceSources(filepath.Join(codexHome, "config.toml"), src, dst)
+		}
+		if err := os.Remove(dst); err != nil {
+			return fmt.Errorf("remove stale bundled marketplaces link: %w", err)
+		}
+	} else if dstInfo != nil {
+		if err := os.RemoveAll(dst); err != nil {
+			return fmt.Errorf("remove stale bundled marketplaces path: %w", err)
+		}
+	}
+
+	if !hasSource {
+		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return fmt.Errorf("create codex .tmp dir: %w", err)
 	}
-
-	if fi, err := os.Lstat(dst); err == nil {
-		isLink := fi.Mode()&bundledMarketplaceLinkModes != 0
-		if isLink {
-			if target, readlinkErr := os.Readlink(dst); readlinkErr == nil && sameCodexPath(target, src) {
-				return rewriteSharedBundledMarketplaceSources(filepath.Join(codexHome, "config.toml"), src, dst)
-			}
-			if err := os.Remove(dst); err != nil {
-				return fmt.Errorf("remove stale bundled marketplaces link: %w", err)
-			}
-		} else {
-			if err := os.RemoveAll(dst); err != nil {
-				return fmt.Errorf("remove stale bundled marketplaces path: %w", err)
-			}
-		}
-	}
-
 	if err := createDirLink(src, dst); err != nil {
 		return fmt.Errorf("expose shared bundled marketplaces: %w", err)
 	}
 	return rewriteSharedBundledMarketplaceSources(filepath.Join(codexHome, "config.toml"), src, dst)
+}
+
+func verifyBundledMarketplaceSource(src, dst string) error {
+	// Resolve the parent of each slot independently. Following dst itself would
+	// make a correctly linked task marketplace indistinguishable from its source.
+	srcParent, err := util.ResolveSymlinks(filepath.Dir(src))
+	if err != nil {
+		return fmt.Errorf("resolve shared bundled marketplaces parent: %w", err)
+	}
+	dstParent, err := util.ResolveSymlinksBestEffort(filepath.Dir(dst))
+	if err != nil {
+		return fmt.Errorf("resolve task bundled marketplaces parent: %w", err)
+	}
+	srcTarget, err := util.ResolveSymlinks(src)
+	if err != nil {
+		return fmt.Errorf("resolve shared bundled marketplaces: %w", err)
+	}
+	dstSlot := filepath.Join(dstParent, filepath.Base(dst))
+	if bundledPathContains(dstSlot, filepath.Join(srcParent, filepath.Base(src))) ||
+		bundledPathContains(dstSlot, srcTarget) || bundledPathContains(srcTarget, dstSlot) {
+		return fmt.Errorf("shared bundled marketplaces overlap task destination %s", dst)
+	}
+	return nil
+}
+
+func bundledPathContains(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	return err == nil && rel != ".." && !filepath.IsAbs(rel) && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // verifyTaskHomeComponentsForLink refuses to touch the link destination when

@@ -53,4 +53,38 @@ func TestBundledMarketplacesDirectoryJunctions(t *testing.T) {
 			t.Fatalf("initial junction was replaced: %v, %v", fi, err)
 		}
 	})
+
+	t.Run("preserves shared marketplace at aliased destination", func(t *testing.T) {
+		codexHome := t.TempDir()
+		bundledRoot, marketplace := writeSharedBundledMarketplace(t, codexHome)
+		sharedHome := t.TempDir()
+		makeJunction(t, filepath.Join(sharedHome, ".tmp"), filepath.Dir(bundledRoot))
+
+		if err := exposeSharedCodexBundledMarketplaces(codexHome, sharedHome); err == nil {
+			t.Error("expected the shared source aliased to the destination to be refused")
+		}
+		if _, err := os.Stat(filepath.Join(marketplace, ".agents", "plugins", "marketplace.json")); err != nil {
+			t.Fatalf("shared marketplace was lost: %v", err)
+		}
+	})
+
+	t.Run("unlinks old marketplace when the new home has none", func(t *testing.T) {
+		bundledRoot, marketplace := writeSharedBundledMarketplace(t, t.TempDir())
+		codexHome := t.TempDir()
+		link := filepath.Join(codexHome, codexBundledMarketplacesRelPath)
+		if err := os.Mkdir(filepath.Dir(link), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		makeJunction(t, link, bundledRoot)
+
+		if err := exposeSharedCodexBundledMarketplaces(codexHome, t.TempDir()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Lstat(link); !os.IsNotExist(err) {
+			t.Errorf("old shared marketplace is still linked: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(marketplace, ".agents", "plugins", "marketplace.json")); err != nil {
+			t.Fatalf("old shared marketplace was changed: %v", err)
+		}
+	})
 }
