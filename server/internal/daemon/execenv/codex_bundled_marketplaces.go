@@ -67,7 +67,10 @@ func exposeSharedCodexBundledMarketplaces(codexHome, sharedHome string) error {
 		return err
 	}
 	if hasSource {
-		if err := verifyBundledMarketplaceSource(src, dst); err != nil {
+		if dstInfo != nil && !isLink && os.SameFile(srcInfo, dstInfo) {
+			return fmt.Errorf("shared bundled marketplaces overlap task destination %s", dst)
+		}
+		if err := verifyBundledMarketplaceSource(codexHome, src, dst); err != nil {
 			return err
 		}
 	}
@@ -101,14 +104,22 @@ func exposeSharedCodexBundledMarketplaces(codexHome, sharedHome string) error {
 	return rewriteSharedBundledMarketplaceSources(filepath.Join(codexHome, "config.toml"), src, dst)
 }
 
-func verifyBundledMarketplaceSource(src, dst string) error {
+func verifyBundledMarketplaceSource(codexHome, src, dst string) error {
 	// Resolve the parent of each slot independently. Following dst itself would
 	// make a correctly linked task marketplace indistinguishable from its source.
 	srcParent, err := util.ResolveSymlinks(filepath.Dir(src))
 	if err != nil {
 		return fmt.Errorf("resolve shared bundled marketplaces parent: %w", err)
 	}
-	dstParent, err := util.ResolveSymlinksBestEffort(filepath.Dir(dst))
+	dstParentPath := filepath.Dir(dst)
+	dstParent, err := util.ResolveSymlinks(dstParentPath)
+	if os.IsNotExist(err) {
+		// On first prepare only the task home exists. Normalize it with the
+		// same strict resolver before comparing paths on Windows.
+		var resolvedHome string
+		resolvedHome, err = util.ResolveSymlinks(codexHome)
+		dstParent = filepath.Join(resolvedHome, filepath.Base(dstParentPath))
+	}
 	if err != nil {
 		return fmt.Errorf("resolve task bundled marketplaces parent: %w", err)
 	}

@@ -55,16 +55,23 @@ func TestBundledMarketplacesDirectoryJunctions(t *testing.T) {
 	})
 
 	t.Run("preserves shared marketplace at aliased destination", func(t *testing.T) {
-		codexHome := t.TempDir()
-		bundledRoot, marketplace := writeSharedBundledMarketplace(t, codexHome)
-		sharedHome := t.TempDir()
-		makeJunction(t, filepath.Join(sharedHome, ".tmp"), filepath.Dir(bundledRoot))
+		for _, tc := range []struct{ name, prefix string }{
+			{"drive-letter path", ""},
+			{"extended path", `\\?\`},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				codexHome := t.TempDir()
+				bundledRoot, marketplace := writeSharedBundledMarketplace(t, codexHome)
+				sharedHome := t.TempDir()
+				makeJunction(t, filepath.Join(sharedHome, ".tmp"), filepath.Dir(bundledRoot))
 
-		if err := exposeSharedCodexBundledMarketplaces(codexHome, sharedHome); err == nil {
-			t.Error("expected the shared source aliased to the destination to be refused")
-		}
-		if _, err := os.Stat(filepath.Join(marketplace, ".agents", "plugins", "marketplace.json")); err != nil {
-			t.Fatalf("shared marketplace was lost: %v", err)
+				if err := exposeSharedCodexBundledMarketplaces(tc.prefix+codexHome, sharedHome); err == nil {
+					t.Error("expected the shared source aliased to the destination to be refused")
+				}
+				if _, err := os.Stat(filepath.Join(marketplace, ".agents", "plugins", "marketplace.json")); err != nil {
+					t.Fatalf("shared marketplace was lost: %v", err)
+				}
+			})
 		}
 	})
 
