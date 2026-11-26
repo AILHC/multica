@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/multica-ai/multica/server/internal/cli"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -12,30 +11,18 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/multica-ai/multica/server/internal/testutil"
+	"github.com/multica-ai/multica/server/pkg/agent"
 	"github.com/spf13/cobra"
 )
 
 func TestMain(m *testing.M) {
-	home, err := os.MkdirTemp("", "multica-cmd-tests-")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "create package test home: %v\n", err)
-		os.Exit(1)
-	}
-	for key, value := range map[string]string{
-		"HOME":         home,
-		"LOCALAPPDATA": filepath.Join(home, "AppData", "Local"),
-		"USERPROFILE":  home,
-		"HOMEDRIVE":    filepath.VolumeName(home),
-		"HOMEPATH":     strings.TrimPrefix(home, filepath.VolumeName(home)),
-	} {
-		if err := os.Setenv(key, value); err != nil {
-			fmt.Fprintf(os.Stderr, "set package test home %s: %v\n", key, err)
-			os.Exit(1)
-		}
-	}
-	for _, key := range []string{
-
+	// A task shell exports the daemon's identity, and a warm pooled session
+	// also exports MULTICA_TASK_ENV_FILE. main() re-applies that file before
+	// every command, so a fixture token set by a test would be replaced by the
+	// live task token. Strip both, plus every key the file can deliver.
+	for _, key := range append([]string{
 		"MULTICA_AGENT_ID",
 		"MULTICA_APP_URL",
 		"MULTICA_PROFILE",
@@ -45,11 +32,59 @@ func TestMain(m *testing.M) {
 		"MULTICA_WORKSPACE_ID",
 		"MULTICA_SERVER_URL",
 		"MULTICA_TASK_CONFIG_ROOT",
-	} {
+		"MULTICA_TASK_WORKSPACES_ROOT",
+		"MULTICA_AGENT_NAME",
+		agent.TaskEnvFileEnv,
+		devEnvHomeEnv,
+		devEnvNameEnv,
+	}, agent.TaskEnvVolatileKeys...) {
 		os.Unsetenv(key)
 	}
+
+	// Redirect both home environment variables to one scratch directory for the
+	// whole binary. On Windows os.UserHomeDir reads USERPROFILE, not HOME, so a
+	// test that redirects only HOME still resolves ~/.multica against the real
+	// home — which is how a full-suite run wrote SaveCLIConfig fixtures over a
+	// real default-profile config.json. Process-wide redirection isolates tests
+	// that forget their own redirect on every platform; per-test t.Setenv
+	// overrides still take precedence.
+	scratchHome, err := os.MkdirTemp("", "multica-cli-tests-home-")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "isolate cmd/multica test home: %v\n", err)
+		os.Exit(1)
+	}
+	for key, value := range map[string]string{
+		"HOME":         scratchHome,
+		"LOCALAPPDATA": filepath.Join(scratchHome, "AppData", "Local"),
+		"USERPROFILE":  scratchHome,
+		"HOMEDRIVE":    filepath.VolumeName(scratchHome),
+		"HOMEPATH":     strings.TrimPrefix(scratchHome, filepath.VolumeName(scratchHome)),
+	} {
+		if err := os.Setenv(key, value); err != nil {
+			_ = os.RemoveAll(scratchHome)
+			fmt.Fprintf(os.Stderr, "set package test home %s: %v\n", key, err)
+			os.Exit(1)
+		}
+	}
+
+	// The daemon-task marker lookup walks up from the working directory. Run
+	// from a checkout inside an agent task workdir, the package directory sits
+	// below that task's real marker, and every API, config and daemon path
+	// refuses. Tests that need a marker create one and t.Chdir into it.
+	testLaunchDir, err = os.Getwd()
+	if err == nil {
+		err = os.Chdir(scratchHome)
+	}
+	if err != nil {
+		_ = os.RemoveAll(scratchHome)
+		fmt.Fprintf(os.Stderr, "move cmd/multica tests into scratch home: %v\n", err)
+		os.Exit(1)
+	}
+
 	code := m.Run()
-	if err := os.RemoveAll(home); err != nil {
+	// Windows cannot remove the current working directory.
+	_ = os.Chdir(os.TempDir())
+	if err := os.RemoveAll(scratchHome); err != nil {
 		fmt.Fprintf(os.Stderr, "remove package test home: %v\n", err)
 		if code == 0 {
 			code = 1
@@ -57,6 +92,11 @@ func TestMain(m *testing.M) {
 	}
 	os.Exit(code)
 }
+
+// testLaunchDir is the working directory the test binary started in, before
+// TestMain moved it into the scratch home. A helper process whose parent set
+// exec.Cmd.Dir reads its fixtures from there.
+var testLaunchDir string
 
 var redirectTestHome = testutil.RedirectUserHome
 
@@ -469,6 +509,12 @@ func TestRunAuthStatusTaskContextRequiresTaskToken(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), "task-scoped mat_ token") {
 				t.Fatalf("runAuthStatus error = %v, want task token requirement", err)
 			}
+			if wantHint := tc.token != ""; strings.Contains(err.Error(), "--preserve-env=MULTICA_TOKEN") != wantHint {
+				t.Fatalf("runAuthStatus error = %v, want secrets manager hint = %v", err, wantHint)
+			}
+			if tc.token != "" && strings.Contains(err.Error(), tc.token) {
+				t.Fatalf("runAuthStatus error leaked the token: %v", err)
+			}
 			if requestCount != 0 {
 				t.Fatalf("auth status made %d request(s) without a task token", requestCount)
 			}
@@ -612,5 +658,76 @@ func TestPackageTestHomeIsIsolated(t *testing.T) {
 	}
 	if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 		t.Fatalf("CLI config path escaped package test home: %s", configPath)
+	}
+}
+
+func TestRunAuthStatusDistinguishesVerificationFailure(t *testing.T) {
+	t.Setenv("LC_ALL", "C")
+	t.Setenv("MULTICA_DEBUG", "")
+
+	debugOption := rootCmd.PersistentFlags().Lookup("debug")
+	originalDebug, originalDebugChanged := debugFlag, debugOption.Changed
+	t.Cleanup(func() {
+		rootCmd.SetArgs(nil)
+		debugFlag, debugOption.Changed = originalDebug, originalDebugChanged
+	})
+
+	for _, tc := range []struct {
+		name    string
+		status  int
+		message string
+		relogin bool
+		task    bool
+		debug   bool
+	}{
+		{"unauthorized", http.StatusUnauthorized, "Token is invalid or expired", true, false, false},
+		{"task unauthorized", http.StatusUnauthorized, "This task token was rejected", false, true, false},
+		{"unavailable", http.StatusServiceUnavailable, "Could not verify the token", false, false, false},
+		{"unavailable with debug", http.StatusServiceUnavailable, "Could not verify the token", false, false, true},
+		{"task unauthorized with debug", http.StatusUnauthorized, "This task token was rejected", false, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			token := "mul_test_auth_status"
+			if tc.task {
+				token = "mat_test_auth_status"
+				t.Setenv("MULTICA_AGENT_ID", "agent-test")
+				t.Setenv("MULTICA_TASK_ID", "task-test")
+				t.Setenv("MULTICA_TASK_CONFIG_ROOT", filepath.Join(t.TempDir(), "task-multica"))
+			}
+			t.Setenv("MULTICA_TOKEN", token)
+			const responseBody = "test verification failure"
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/me" {
+					t.Errorf("unexpected request path %q", r.URL.Path)
+				}
+				w.WriteHeader(tc.status)
+				fmt.Fprint(w, responseBody)
+			}))
+			defer srv.Close()
+			t.Setenv("MULTICA_SERVER_URL", srv.URL)
+			stderr := captureStderr(t)
+			defer stderr.restore()
+			args := []string{"auth", "status"}
+			debugFlag = false
+			if tc.debug {
+				args = append(args, "--debug")
+			}
+			rootCmd.SetArgs(args)
+			if err := rootCmd.Execute(); err != nil {
+				t.Fatal(err)
+			}
+			out := stderr.read()
+			if !strings.Contains(out, tc.message) || strings.Contains(out, "multica login") != tc.relogin || strings.Contains(out, token) {
+				t.Fatalf("unexpected auth status output: %q", out)
+			}
+			if tc.debug {
+				detail := fmt.Sprintf("[debug] http: GET /api/me status=%d body=%s", tc.status, responseBody)
+				if !strings.Contains(out, detail) {
+					t.Fatalf("expected %q in auth status output: %q", detail, out)
+				}
+			} else if strings.Contains(out, "[debug]") || strings.Contains(out, responseBody) {
+				t.Fatalf("unexpected debug details in auth status output: %q", out)
+			}
+		})
 	}
 }

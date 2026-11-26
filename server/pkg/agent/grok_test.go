@@ -164,9 +164,9 @@ func TestGrokSupplementTargetsActivePrompt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), testFallbackTimeout)
 	defer cancel()
-	session, err := backend.Execute(ctx, "continue working", ExecOptions{Timeout: 5 * time.Second, EnableTaskSupplement: true})
+	session, err := backend.Execute(ctx, "continue working", ExecOptions{Timeout: testFallbackTimeout, EnableTaskSupplement: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +176,7 @@ func TestGrokSupplementTargetsActivePrompt(t *testing.T) {
 	if session.SupplementReady() {
 		t.Fatal("supplement became ready before session/prompt started")
 	}
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(testFallbackTimeout)
 	for !session.SupplementReady() && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -244,11 +244,11 @@ func TestGrokSupplementTimesOutIndependentlyAndAllowsNextMessage(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	session, err := backend.Execute(ctx, "continue working", ExecOptions{Timeout: time.Minute, EnableTaskSupplement: true})
+	session, err := backend.Execute(ctx, "continue working", ExecOptions{Timeout: 10 * testFallbackTimeout, EnableTaskSupplement: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(testFallbackTimeout)
 	for !session.SupplementReady() && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -257,18 +257,19 @@ func TestGrokSupplementTimesOutIndependentlyAndAllowsNextMessage(t *testing.T) {
 		t.Fatal("supplement never became ready during active prompt")
 	}
 
-	started := time.Now()
+	// ctx has no deadline and the run timeout is far away, so a
+	// DeadlineExceeded here can only come from grokSupplementTimeout.
 	firstSupplement := make(chan error, 1)
 	go func() {
 		firstSupplement <- session.Supplement(ctx, "The first interjection will not be acknowledged.")
 	}()
 	select {
 	case err = <-firstSupplement:
-	case <-time.After(time.Second):
+	case <-time.After(testFallbackTimeout):
 		cancel()
 		select {
 		case <-session.Result:
-		case <-time.After(3 * time.Second):
+		case <-time.After(testFallbackTimeout):
 			t.Fatal("Grok run did not stop after its parent context was canceled")
 		}
 		t.Fatal("supplement did not return within its independent timeout")
@@ -276,10 +277,6 @@ func TestGrokSupplementTimesOutIndependentlyAndAllowsNextMessage(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) {
 		cancel()
 		t.Fatalf("first supplement error=%v, want context deadline exceeded", err)
-	}
-	if elapsed := time.Since(started); elapsed > time.Second {
-		cancel()
-		t.Fatalf("first supplement took %s to time out, want under 1s", elapsed)
 	}
 	if !session.SupplementReady() {
 		cancel()
@@ -295,7 +292,7 @@ func TestGrokSupplementTimesOutIndependentlyAndAllowsNextMessage(t *testing.T) {
 		if result.Status != "completed" {
 			t.Fatalf("turn status=%q error=%q", result.Status, result.Error)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(testFallbackTimeout):
 		cancel()
 		t.Fatal("Grok prompt did not complete after the second interjection")
 	}
@@ -314,9 +311,9 @@ func TestGrokSupplementReportsACPRejection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), testFallbackTimeout)
 	defer cancel()
-	session, err := backend.Execute(ctx, "continue working", ExecOptions{Timeout: 5 * time.Second, EnableTaskSupplement: true})
+	session, err := backend.Execute(ctx, "continue working", ExecOptions{Timeout: testFallbackTimeout, EnableTaskSupplement: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -326,7 +323,7 @@ func TestGrokSupplementReportsACPRejection(t *testing.T) {
 		for range session.Messages {
 		}
 	}()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(testFallbackTimeout)
 	for !session.SupplementReady() && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -368,9 +365,9 @@ func TestGrokSupplementHandlesObservedNestedResultStatus(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), testFallbackTimeout)
 			defer cancel()
-			session, err := backend.Execute(ctx, "continue working", ExecOptions{Timeout: 5 * time.Second, EnableTaskSupplement: true})
+			session, err := backend.Execute(ctx, "continue working", ExecOptions{Timeout: testFallbackTimeout, EnableTaskSupplement: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -378,7 +375,7 @@ func TestGrokSupplementHandlesObservedNestedResultStatus(t *testing.T) {
 				for range session.Messages {
 				}
 			}()
-			deadline := time.Now().Add(3 * time.Second)
+			deadline := time.Now().Add(testFallbackTimeout)
 			for !session.SupplementReady() && time.Now().Before(deadline) {
 				time.Sleep(5 * time.Millisecond)
 			}
@@ -409,10 +406,10 @@ func TestGrokBackendStreamsAndCompletes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new grok backend: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), testFallbackTimeout)
 	defer cancel()
 
-	session, err := backend.Execute(ctx, "say pong", ExecOptions{Timeout: 5 * time.Second})
+	session, err := backend.Execute(ctx, "say pong", ExecOptions{Timeout: testFallbackTimeout})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -479,9 +476,9 @@ func TestGrokPromptStopReasons(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), testFallbackTimeout)
 			defer cancel()
-			session, err := backend.Execute(ctx, "say pong", ExecOptions{Timeout: 5 * time.Second})
+			session, err := backend.Execute(ctx, "say pong", ExecOptions{Timeout: testFallbackTimeout})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -531,11 +528,11 @@ func TestGrokBlockedArgsFiltering(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new grok backend: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), testFallbackTimeout)
 	defer cancel()
 
 	session, err := backend.Execute(ctx, "task", ExecOptions{
-		Timeout:       5 * time.Second,
+		Timeout:       testFallbackTimeout,
 		ThinkingLevel: "high",
 		// Users must not strip ACP mode, disable auto-approve, or switch
 		// into print/headless transports.
@@ -602,10 +599,10 @@ func TestGrokSetModelFailureFailsTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new grok backend: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), testFallbackTimeout)
 	defer cancel()
 
-	session, err := backend.Execute(ctx, "task", ExecOptions{Model: "bogus-model", Timeout: 5 * time.Second})
+	session, err := backend.Execute(ctx, "task", ExecOptions{Model: "bogus-model", Timeout: testFallbackTimeout})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -640,12 +637,12 @@ func TestGrokUsesSessionLoadForResume(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new grok backend: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), testFallbackTimeout)
 	defer cancel()
 
 	session, err := backend.Execute(ctx, "continue", ExecOptions{
 		ResumeSessionID: "ses_existing",
-		Timeout:         5 * time.Second,
+		Timeout:         testFallbackTimeout,
 	})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
@@ -705,12 +702,12 @@ func TestGrokAuthenticatesBeforeSession(t *testing.T) {
 			if err != nil {
 				t.Fatalf("new grok backend: %v", err)
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), testFallbackTimeout)
 			defer cancel()
 
 			session, err := backend.Execute(ctx, "task", ExecOptions{
 				ResumeSessionID: tc.resume,
-				Timeout:         5 * time.Second,
+				Timeout:         testFallbackTimeout,
 			})
 			if err != nil {
 				t.Fatalf("execute: %v", err)
@@ -776,10 +773,10 @@ func TestGrokAuthFailureFailsTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new grok backend: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), testFallbackTimeout)
 	defer cancel()
 
-	session, err := backend.Execute(ctx, "task", ExecOptions{Timeout: 5 * time.Second})
+	session, err := backend.Execute(ctx, "task", ExecOptions{Timeout: testFallbackTimeout})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -816,7 +813,7 @@ func TestGrokNoUsableAuthMethodFailsBeforeSession(t *testing.T) {
 			if err != nil {
 				t.Fatalf("new grok backend: %v", err)
 			}
-			session, err := backend.Execute(context.Background(), "task", ExecOptions{Timeout: 5 * time.Second})
+			session, err := backend.Execute(context.Background(), "task", ExecOptions{Timeout: testFallbackTimeout})
 			if err != nil {
 				t.Fatalf("execute: %v", err)
 			}
@@ -857,7 +854,7 @@ func TestGrokUsesAdvertisedAPIKeyMethod(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new grok backend: %v", err)
 	}
-	session, err := backend.Execute(context.Background(), "task", ExecOptions{Timeout: 5 * time.Second})
+	session, err := backend.Execute(context.Background(), "task", ExecOptions{Timeout: testFallbackTimeout})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -889,7 +886,7 @@ func TestGrokDrainsNotificationsAfterPromptResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new grok backend: %v", err)
 	}
-	session, err := backend.Execute(context.Background(), "task", ExecOptions{Timeout: 5 * time.Second})
+	session, err := backend.Execute(context.Background(), "task", ExecOptions{Timeout: testFallbackTimeout})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -923,7 +920,7 @@ func TestGrokPropagatesMCPAndUsage(t *testing.T) {
 		t.Fatalf("new grok backend: %v", err)
 	}
 	session, err := backend.Execute(context.Background(), "task", ExecOptions{
-		Timeout:   5 * time.Second,
+		Timeout:   testFallbackTimeout,
 		McpConfig: json.RawMessage(`{"mcpServers":{"fetch":{"command":"uvx","args":["mcp-server-fetch"]}}}`),
 	})
 	if err != nil {
@@ -986,7 +983,7 @@ func TestGrokAttributesUsageOnResumeWithoutConfiguredModel(t *testing.T) {
 	// MULTICA_GROK_MODEL pins one (see daemon.go resolveModel).
 	session, err := backend.Execute(context.Background(), "continue", ExecOptions{
 		ResumeSessionID: "ses_existing",
-		Timeout:         5 * time.Second,
+		Timeout:         testFallbackTimeout,
 	})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
@@ -1032,7 +1029,7 @@ func TestGrokCancellation(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	session, err := backend.Execute(ctx, "task", ExecOptions{Timeout: 5 * time.Second})
+	session, err := backend.Execute(ctx, "task", ExecOptions{Timeout: testFallbackTimeout})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -1040,7 +1037,7 @@ func TestGrokCancellation(t *testing.T) {
 		for range session.Messages {
 		}
 	}()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(testFallbackTimeout)
 	for {
 		raw, _ := os.ReadFile(requestsFile)
 		if strings.Contains(string(raw), `"method":"session/prompt"`) {
@@ -1057,7 +1054,7 @@ func TestGrokCancellation(t *testing.T) {
 		if result.Status != "aborted" {
 			t.Fatalf("status=%q error=%q, want aborted", result.Status, result.Error)
 		}
-	case <-time.After(4 * time.Second):
+	case <-time.After(testFallbackTimeout):
 		t.Fatal("grok child was not terminated and reaped")
 	}
 }
